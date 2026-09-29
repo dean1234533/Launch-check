@@ -64,6 +64,6 @@ function icon(size) {
 }
 
 for (const size of [16, 48, 128]) {
-  writeFileSync(new URL(`../extension/icons/icon${size}.png`, import.meta.url), icon(size));
+  writeFileSync(new URL(`../extension/public/icons/icon${size}.png`, import.meta.url), icon(size));
 }
-console.log("Icons written to extension/icons/");
+console.log("Icons written to extension/public/icons/");

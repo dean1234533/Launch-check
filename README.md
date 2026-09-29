@@ -26,9 +26,9 @@ report: 🔴 must fix / 🟡 should fix ◀────────────�
 
 | Folder | What it is |
 |---|---|
-| `extension/` | Chrome extension (Manifest V3, no build step). Adds the button on GitHub and shows the report and fix buttons |
+| `extension/` | Chrome extension (Manifest V3). The popup, settings and report pages are React, built with Vite. `extension/public/` holds the manifest, icons and the GitHub button script |
 | `server/` | Node + TypeScript API: GitHub access, built-in checks, Claude review and fixes |
-| `scripts/make-icons.mjs` | Regenerates the extension icons |
+| `scripts/make-icons.mjs` | Regenerates the extension icons (into `extension/public/icons`) |
 
 ## Run it locally
 
@@ -44,8 +44,15 @@ npm test                  # built-in check tests
 
 **2. Extension**
 
+```bash
+cd extension
+npm install
+npm run build     # writes extension/dist; use `npm run dev` to rebuild on every change
+npm test          # page and helper tests
+```
+
 1. Open `chrome://extensions` and turn on **Developer mode**.
-2. Click **Load unpacked** and pick the `extension/` folder.
+2. Click **Load unpacked** and pick the **`extension/dist/`** folder. After each rebuild, click the reload icon on the extension card.
 3. The settings page opens. Paste a **fine-grained GitHub token** with access to the repos you want to scan and these permissions:
    - **Contents: Read and write** (to read code and push fix branches)
    - **Pull requests: Read and write** (to open fix pull requests)
@@ -75,16 +82,27 @@ There is no separate sign-up. The account is the GitHub user behind the token: t
 
 | | Free | Pro |
 |---|---|---|
-| Scans | 1 (lifetime) | 10 per billing period |
-| Fixes (pull requests) | 2 (lifetime) | 100 per billing period |
+| Scans | 3 (lifetime), built-in checks only | 10 per billing period, with the AI review |
+| Fixes (pull requests) | 2 (lifetime) | 25 per billing period |
 
-Limits are env vars (`FREE_SCANS`, `PRO_SCANS_PER_PERIOD`, and so on). A scan or fix that fails is refunded. Past-due subscriptions keep access while Stripe retries the payment.
+The AI review is the part that costs money, so free scans run only the built-in checks and the dependency check. Limits are env vars (`FREE_SCANS`, `PRO_FIXES_PER_PERIOD`, and so on). For local development set `FREE_AI_REVIEW=1` so free accounts get the AI review too. A scan or fix that fails is refunded. Past-due subscriptions keep access while Stripe retries the payment.
+
+## Credits (pay as you go)
+
+Credits let people use the AI review without a subscription, and let Pro users go past their monthly allowance. An AI scan costs 5 credits and a fix costs 2 (`CREDITS_PER_SCAN`, `CREDITS_PER_FIX`).
+
+- **Order of use:** a Pro allowance is used first, then credits. A free account with credits gets the AI review on its next scan (5 credits). A free account without credits gets the free built-in checks.
+- Credits never expire. A failed scan or fix gives its credits back. A fix that runs but makes no change is not refunded, because the AI cost was spent.
+- Purchases are one-time Stripe Checkout payments. The webhook adds the credits once per checkout session, so retries can't double-grant.
+- **Refunds:** refunding a credit purchase in Stripe does not remove the credits. Adjust the balance by hand (insert a negative row into `credit_ledger`) if that matters.
+
+To sell packs, create a **one-time Price** in Stripe for each pack and list them in `CREDIT_PACKS` (`price_id:credits`, comma-separated). The extension reads names and prices from Stripe, so there is nothing to change in the extension. Pricing tip: Stripe's 20p fixed fee makes packs under about £5 unprofitable, and one AI scan costs you roughly $0.25-0.60, so price a scan at well above that. Suggested starting point: 25 credits for £7, 60 credits for £15, 150 credits for £30.
 
 ## Stripe setup
 
 1. In the Stripe Dashboard (test mode first) create a **Product** with a **recurring monthly Price** (for example $19). Copy the price ID (`price_...`).
 2. Copy your secret key (`sk_test_...`) from **Developers > API keys**.
-3. Add a webhook endpoint pointing at `https://YOUR-SERVER/webhooks/stripe` for these events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`. Copy its signing secret (`whsec_...`).
+3. Add a webhook endpoint pointing at `https://YOUR-SERVER/webhooks/stripe` for these events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, and, if you sell credits, `checkout.session.async_payment_succeeded`. Copy its signing secret (`whsec_...`).
 4. Turn on the **Customer portal** (Settings > Billing > Customer portal) so people can cancel and update cards.
 5. Put the values in `server/.env`: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, and `PUBLIC_URL` (the server's public address).
 
@@ -95,9 +113,9 @@ stripe listen --forward-to localhost:8787/webhooks/stripe   # prints the whsec_.
 # then click Upgrade in the extension and pay with card 4242 4242 4242 4242
 ```
 
-Without the three Stripe variables the server still runs. The Upgrade buttons are hidden and only the free limits apply (raise them with `FREE_SCANS` while developing).
+Without the three Stripe variables the server still runs. The Upgrade buttons are hidden and only the free limits apply (set `FREE_AI_REVIEW=1` to try the AI review locally).
 
-Billing API: `GET /api/me` (plan and usage), `POST /api/billing/checkout`, `POST /api/billing/portal`, `POST /webhooks/stripe`. Scan history: `GET /api/history?owner=&repo=` and `GET /api/scans/:id`.
+Billing API: `GET /api/me` (plan, usage, credits and packs), `POST /api/billing/checkout`, `POST /api/billing/credits`, `POST /api/billing/portal`, `POST /webhooks/stripe`. Scan history: `GET /api/history?owner=&repo=` and `GET /api/scans/:id`.
 
 ## Deploying the server
 
@@ -105,11 +123,14 @@ Billing API: `GET /api/me` (plan and usage), `POST /api/billing/checkout`, `POST
 
 ## Costs
 
-Each scan sends up to `MAX_SCAN_CHARS` (default 400k characters, about 100k tokens) of the most relevant files to Claude. At current prices that is roughly **$0.40–$1 per full scan** and a few cents to about $0.50 per fix, depending on repo size. The plan limits above keep usage within what a subscription pays for.
+The server records the real token usage and estimated dollar cost of every AI call. Run `npm run costs` in `server/` to see the average and maximum cost per scan and fix, and the most expensive users.
+
+Each scan sends up to `MAX_SCAN_CHARS` (default 250k characters, about 60k tokens) of the most relevant files to Claude. At current prices that is roughly **$0.12–$0.30 per full scan** with the default Sonnet 5.5 model at medium effort (`AI_MODEL`, `AI_EFFORT`) (about double that on Opus 5.5) and a few cents to about $0.15 per fix (estimates; `npm run costs` shows the real numbers), depending on repo size. The plan limits above keep usage within what a subscription pays for.
 
 ## Done and still to do
 
 - [x] Accounts (by GitHub identity) and Stripe subscriptions: checkout, customer portal and webhooks
+- [x] Credit packs (one-time purchases) for pay-as-you-go use
 - [x] Usage limits stored in a database, per plan and billing period
 - [x] Scan history, and "no longer reported" after a re-scan
 - [x] Dependency check against OSV.dev (npm `package-lock.json`)

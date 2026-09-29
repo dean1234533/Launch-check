@@ -48,6 +48,8 @@ export interface ScanResult {
   truncated: boolean;
   issues: Issue[];
   summary: string;
+  /** False when only the built-in checks ran (free plan), so the report can offer the AI review as an upgrade. */
+  aiReview?: boolean;
   /** Saved scan id, so the report can be reopened from history. */
   scanId?: number;
   /** Problems the previous scan on this branch reported that this one no longer does. */

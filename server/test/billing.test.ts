@@ -7,13 +7,16 @@ import { createApp } from "../src/app.js";
 import { applyStripeEvent } from "../src/billing.js";
 import { loadConfig } from "../src/config.js";
 import { openDb } from "../src/db.js";
-import { planOf, reserve, usageCounts, QuotaError } from "../src/plans.js";
+import { addCredits, creditBalance } from "../src/credits.js";
+import { estimateCostUsd } from "../src/cost.js";
+import { planOf, recordAiCall, reserve, usageCounts, QuotaError } from "../src/plans.js";
 import { getUser, upsertUser } from "../src/users.js";
 
 const config = loadConfig({
   STRIPE_SECRET_KEY: "sk_test_x",
   STRIPE_WEBHOOK_SECRET: "whsec_test",
   STRIPE_PRICE_ID: "price_x",
+  FREE_SCANS: "1",
 } as NodeJS.ProcessEnv);
 
 function subEvent(type: string, over: Record<string, unknown>, created = 1_700_000_000): Stripe.Event {
@@ -46,7 +49,7 @@ describe("plans and quota", () => {
   it("refunds a reservation when the work fails", () => {
     const db = openDb(":memory:");
     const user = upsertUser(db, 1, "octo");
-    reserve(db, config, user, "scans")();
+    reserve(db, config, user, "scans").refund();
     assert.equal(usageCounts(db, user).scans, 0);
     reserve(db, config, user, "scans"); // allowance is back
   });
@@ -64,6 +67,85 @@ describe("plans and quota", () => {
     applyStripeEvent(db, subEvent("customer.subscription.updated", { items: { data: [{ current_period_start: 1_702_600_000, current_period_end: 1_705_200_000 }] } }, 1_702_600_000));
     user = getUser(db, 42)!;
     assert.equal(usageCounts(db, user, 1_702_600_000_000 + 1000).scans, 0);
+  });
+});
+
+describe("cost tracking", () => {
+  it("prices a call from its token counts and stores it", () => {
+    const usage = { model: "claude-opus-5-5", inputTokens: 100_000, outputTokens: 10_000, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    assert.ok(Math.abs(estimateCostUsd(usage) - 0.6) < 1e-9); // $0.40 in + $0.20 out
+    const db = openDb(":memory:");
+    upsertUser(db, 1, "octo");
+    recordAiCall(db, 1, "scans", usage);
+    const row = db.prepare("SELECT COUNT(*) AS n, SUM(cost_usd) AS c FROM ai_calls").get() as { n: number; c: number };
+    assert.equal(row.n, 1);
+    assert.ok(Math.abs(row.c - 0.6) < 1e-9);
+  });
+  it("defaults to a static-only free tier and a 25-fix Pro cap", () => {
+    const d = loadConfig({} as NodeJS.ProcessEnv);
+    assert.equal(d.freeAiReview, false);
+    assert.equal(d.limits.pro.fixes, 25);
+    assert.equal(d.maxScanChars, 250_000);
+  });
+});
+
+describe("credits", () => {
+  const withPacks = loadConfig({ FREE_SCANS: "1", FREE_FIXES: "1", CREDIT_PACKS: "price_a:20,bad,price_b:x" } as NodeJS.ProcessEnv);
+
+  it("parses credit packs from the environment and ignores malformed ones", () => {
+    assert.deepEqual(withPacks.creditPacks, [{ priceId: "price_a", credits: 20 }]);
+  });
+
+  it("gives free users a static scan first, and an AI scan once they have credits", () => {
+    const db = openDb(":memory:");
+    const user = upsertUser(db, 1, "octo");
+    assert.equal(reserve(db, withPacks, user, "scans").aiReview, false); // free allowance, static only
+    assert.throws(() => reserve(db, withPacks, user, "scans"), (e) => e instanceof QuotaError && e.status === 402);
+    addCredits(db, 1, 12, "purchase", "cs_1");
+    const r = reserve(db, withPacks, user, "scans");
+    assert.equal(r.source, "credits");
+    assert.equal(r.aiReview, true);
+    assert.equal(creditBalance(db, 1), 7); // 12 - 5
+    r.refund();
+    assert.equal(creditBalance(db, 1), 12);
+  });
+
+  it("uses credits for fixes only after the plan allowance, and refuses when neither is left", () => {
+    const db = openDb(":memory:");
+    const user = upsertUser(db, 1, "octo");
+    assert.equal(reserve(db, withPacks, user, "fixes").source, "plan");
+    assert.throws(() => reserve(db, withPacks, user, "fixes"), QuotaError);
+    addCredits(db, 1, 3, "purchase", "cs_1");
+    assert.equal(reserve(db, withPacks, user, "fixes").source, "credits");
+    assert.equal(creditBalance(db, 1), 1); // 3 - 2
+    assert.throws(() => reserve(db, withPacks, user, "fixes"), QuotaError); // 1 credit < 2
+  });
+
+  it("lets pro users fall back to credits after their allowance", () => {
+    const db = openDb(":memory:");
+    upsertUser(db, 42, "octo");
+    applyStripeEvent(db, subEvent("customer.subscription.created", {}));
+    const user = getUser(db, 42)!;
+    const t = user.periodStart! + 1000;
+    for (let i = 0; i < 10; i++) assert.equal(reserve(db, withPacks, user, "scans", t + i).source, "plan");
+    assert.throws(() => reserve(db, withPacks, user, "scans", t + 50), (e) => e instanceof QuotaError && e.status === 429);
+    addCredits(db, 42, 5, "purchase", "cs_2");
+    assert.equal(reserve(db, withPacks, user, "scans", t + 60).source, "credits");
+  });
+
+  it("grants credits once per paid checkout session and ignores replays", () => {
+    const db = openDb(":memory:");
+    upsertUser(db, 42, "octo");
+    const event = {
+      id: "evt_p", type: "checkout.session.completed", created: 1,
+      data: { object: { id: "cs_9", mode: "payment", payment_status: "paid", customer: "cus_1", client_reference_id: "42", metadata: { kind: "credits", credits: "20", github_id: "42" } } },
+    } as unknown as Stripe.Event;
+    applyStripeEvent(db, event);
+    applyStripeEvent(db, event);
+    assert.equal(creditBalance(db, 42), 20);
+    const unpaid = { ...event, data: { object: { ...(event.data.object as object), id: "cs_10", payment_status: "unpaid" } } } as unknown as Stripe.Event;
+    applyStripeEvent(db, unpaid);
+    assert.equal(creditBalance(db, 42), 20);
   });
 });
 

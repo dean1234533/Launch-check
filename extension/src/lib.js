@@ -57,27 +57,24 @@ export async function openBilling(kind) {
   await chrome.tabs.create({ url });
 }
 
+/** Opens Stripe Checkout for a one-time credit pack. */
+export async function buyCredits(pack) {
+  const { url } = await api("/api/billing/credits", { pack });
+  await chrome.tabs.create({ url });
+}
+
+export function packLabel(p) {
+  const price = p.amount != null && p.currency ? new Intl.NumberFormat(undefined, { style: "currency", currency: p.currency.toUpperCase() }).format(p.amount / 100) : "";
+  return `Buy ${p.credits} credits${price ? ` · ${price}` : ""}`;
+}
+
 /** One-line description of the user's plan and what is left, e.g. "Pro · 7 of 10 scans left". */
 export function planLine(a) {
   if (a.plan === "pro") {
     const renews = a.periodEnd ? ` · ${a.cancelAtPeriodEnd ? "ends" : "renews"} ${new Date(a.periodEnd).toLocaleDateString()}` : "";
-    return `Pro · ${a.remaining.scans} of ${a.limits.scans} scans left this period${renews}`;
+    return `Pro · ${a.remaining.scans} of ${a.limits.scans} scans left this period${renews}${a.credits > 0 ? ` · ${a.credits} credits` : ""}`;
   }
-  return `Free · ${a.remaining.scans} of ${a.limits.scans} scan${a.limits.scans === 1 ? "" : "s"} left`;
-}
-
-export function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
-  }
-  for (const child of children.flat()) {
-    if (child == null || child === false) continue;
-    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
-  }
-  return node;
+  return `Free · ${a.remaining.scans} of ${a.limits.scans} scan${a.limits.scans === 1 ? "" : "s"} left${a.credits > 0 ? ` · ${a.credits} credits` : ""}`;
 }
 
 export function reportKey(owner, repo) {

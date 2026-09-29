@@ -4,12 +4,12 @@ import type Stripe from "stripe";
 import { z } from "zod";
 import { AiRefusalError, planFix, reviewRepo } from "./ai.js";
 import { makeAuthenticator, HttpError, resolveGithubUser, type ResolveGithubUser } from "./auth.js";
-import { applyStripeEvent, BillingError, createCheckoutUrl, createPortalUrl } from "./billing.js";
+import { applyStripeEvent, BillingError, createCheckoutUrl, createCreditCheckoutUrl, createPortalUrl, listPacks } from "./billing.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
 import { fetchFiles, fetchSnapshot, githubClient, openFixPullRequest, type FileChange } from "./github.js";
 import { checkDependencies, parseLockfile } from "./osv.js";
-import { accountSummary, QuotaError, reserve } from "./plans.js";
+import { accountSummary, QuotaError, recordAiCall, reserve } from "./plans.js";
 import { getScan, latestScan, listScans, resolvedSince, saveScan } from "./scans.js";
 import { runStaticChecks } from "./staticChecks.js";
 import { IssueSchema, type Issue, type ScanResult } from "./types.js";
@@ -100,7 +100,7 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
   app.get("/api/me", async (req, res, next) => {
     try {
       const { user } = await authenticate(req);
-      res.json(accountSummary(db, config, user, Boolean(stripe)));
+      res.json({ ...accountSummary(db, config, user, Boolean(stripe)), packs: await listPacks(stripe, config) });
     } catch (err) {
       next(err);
     }
@@ -111,6 +111,17 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
       const { user } = await authenticate(req);
       if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
       res.json({ url: await createCheckoutUrl(stripe, db, config, user) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post("/api/billing/credits", async (req, res, next) => {
+    try {
+      const { user } = await authenticate(req);
+      if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
+      const { pack } = z.object({ pack: z.string().max(100) }).parse(req.body);
+      res.json({ url: await createCreditCheckoutUrl(stripe, db, config, user, pack) });
     } catch (err) {
       next(err);
     }
@@ -152,7 +163,8 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
     try {
       const { user, token } = await authenticate(req);
       const body = ScanBody.parse(req.body);
-      refund = reserve(db, config, user, "scans");
+      const reservation = reserve(db, config, user, "scans");
+      refund = reservation.refund;
       const octokit = githubClient(token);
 
       const snapshot = await fetchSnapshot(octokit, body.owner, body.repo, config.maxScanChars, body.branch);
@@ -169,7 +181,18 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
         : null;
       const known = [...staticIssues, ...(depsIssue ? [depsIssue] : [])];
 
-      const ai = await reviewRepo(snapshot, known);
+      // The AI review is what costs money: it needs a Pro allowance or credits (or FREE_AI_REVIEW=1 for development).
+      const aiReview = reservation.aiReview;
+      const ai = aiReview
+        ? await reviewRepo(snapshot, known)
+        : {
+            summary: known.length
+              ? `The built-in checks found ${known.length} ${known.length === 1 ? "problem" : "problems"}. Upgrade to Pro, or use credits, for the full AI code review, which also checks login and permission rules, payments, data leaks and crashes.`
+              : "The built-in checks found no problems. Upgrade to Pro, or use credits, for the full AI code review, which also checks login and permission rules, payments, data leaks and crashes.",
+            issues: [] as Issue[],
+            usage: null,
+          };
+      if (ai.usage) recordAiCall(db, user.githubId, "scans", ai.usage);
       const issues: Issue[] = [...known, ...ai.issues].sort(
         (a, b) => Number(b.severity === "critical") - Number(a.severity === "critical"),
       );
@@ -184,6 +207,7 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
         truncated: snapshot.truncated,
         issues,
         summary: ai.summary,
+        aiReview,
         resolved: previous ? resolvedSince(previous.result.issues, issues) : [],
       };
       result.scanId = saveScan(db, user.githubId, result);
@@ -199,20 +223,22 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
     try {
       const { user, token } = await authenticate(req);
       const { owner, repo, branch, issue } = FixBody.parse(req.body);
-      refund = reserve(db, config, user, "fixes");
+      const reservation = reserve(db, config, user, "fixes");
+      refund = reservation.refund;
       const octokit = githubClient(token);
 
       const snapshot = await fetchSnapshot(octokit, owner, repo, 0, branch); // tree only, no file bodies
       const relevant = issue.files.filter(safePath).slice(0, 10);
       const files = await fetchFiles(octokit, owner, repo, branch, relevant);
 
-      const plan = await planFix(issue, files, snapshot.allPaths);
+      const { plan, usage } = await planFix(issue, files, snapshot.allPaths);
+      recordAiCall(db, user.githubId, "fixes", usage);
       const changes: FileChange[] = plan.changes
         .filter((c) => safePath(c.path))
         .map((c) => ({ path: c.path, content: c.action === "delete" ? null : c.content }));
 
       if (changes.length === 0) {
-        refund(); // nothing was produced, so it doesn't count against the allowance
+        // No refund: the AI ran and cost money even though it made no change.
         res.json({ status: "no_changes", message: plan.prBody, manualSteps: plan.manualSteps });
         return;
       }

@@ -37,6 +37,27 @@ CREATE TABLE IF NOT EXISTS scans (
   result_json TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ai_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  github_id INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('scans','fixes')),
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  cache_read_tokens INTEGER NOT NULL,
+  cache_write_tokens INTEGER NOT NULL,
+  cost_usd REAL NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS credit_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  github_id INTEGER NOT NULL,
+  delta INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  ref TEXT UNIQUE,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS credit_user ON credit_ledger (github_id);
 CREATE INDEX IF NOT EXISTS scans_repo ON scans (github_id, owner, repo, created_at);
 `;
 

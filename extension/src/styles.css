@@ -87,3 +87,7 @@ label { display: block; font-weight: 600; margin: 14px 0 4px; }
   background: var(--bg);
 }
 .error { color: var(--critical); }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+button.link { background: none; border: 0; padding: 0 0 0 8px; color: var(--accent); text-decoration: underline; font-weight: 400; }
+.account-bar { font-size: 13px; margin-top: 2px; }

@@ -1,9 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
+import { toAiUsage, type AiUsage } from "./cost.js";
 import { IssueSchema, type Issue, type RepoFile, type RepoSnapshot } from "./types.js";
 
-const MODEL = "claude-opus-5-5";
+// Sonnet is half the price of Opus; set AI_MODEL=claude-opus-5-5 to trade cost for a deeper review.
+const MODEL = process.env.AI_MODEL || "claude-sonnet-5-5";
+// How hard the model thinks. "medium" is the cost-saving default; raise to "high" for a deeper (pricier) review.
+const EFFORT = (["low", "medium", "high", "xhigh", "max"] as const).find((e) => e === process.env.AI_EFFORT) ?? "medium";
 // Server-side fallback: if the model declines a request, the API retries it on a
 // suitable fallback model inside the same call.
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ["server-side-fallback-2026-07-01"];
@@ -44,7 +48,7 @@ const ReviewSchema = z.object({
 export async function reviewRepo(
   snapshot: RepoSnapshot,
   alreadyFound: Issue[],
-): Promise<{ summary: string; issues: Issue[] }> {
+): Promise<{ summary: string; issues: Issue[]; usage: AiUsage }> {
   const fileList = snapshot.allPaths.slice(0, 3000).join("\n");
   const known = alreadyFound.map((i) => `- ${i.title} (${i.files.join(", ")})`).join("\n") || "(none)";
 
@@ -54,7 +58,7 @@ export async function reviewRepo(
     betas: BETAS,
     fallbacks: "default",
     thinking: { type: "adaptive" },
-    output_config: { effort: "high", format: betaZodOutputFormat(ReviewSchema) },
+    output_config: { effort: EFFORT, format: betaZodOutputFormat(ReviewSchema) },
     system: [{ type: "text", text: REVIEW_SYSTEM, cache_control: { type: "ephemeral" } }],
     messages: [
       {
@@ -79,7 +83,7 @@ Review the code and report the launch-blocking and important problems.`,
 
   if (response.stop_reason === "refusal") throw new AiRefusalError("The AI declined to review this repository.");
   if (!response.parsed_output) throw new Error(`AI review returned no result (stop_reason: ${response.stop_reason})`);
-  return response.parsed_output;
+  return { ...response.parsed_output, usage: toAiUsage(MODEL, response.usage) };
 }
 
 const FixSchema = z.object({
@@ -115,14 +119,14 @@ export async function planFix(
   issue: Issue,
   files: RepoFile[],
   allPaths: string[],
-): Promise<FixPlan> {
+): Promise<{ plan: FixPlan; usage: AiUsage }> {
   const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 64000,
     betas: BETAS,
     fallbacks: "default",
     thinking: { type: "adaptive" },
-    output_config: { effort: "high", format: betaZodOutputFormat(FixSchema) },
+    output_config: { effort: EFFORT, format: betaZodOutputFormat(FixSchema) },
     system: FIX_SYSTEM,
     messages: [
       {
@@ -150,5 +154,5 @@ ${renderFiles(files) || "(these files do not exist yet)"}`,
   if (response.stop_reason === "max_tokens") throw new Error("The fix was too large to generate in one go.");
   const text = response.content.find((b) => b.type === "text");
   if (!text || text.type !== "text") throw new Error("AI fix returned no result.");
-  return FixSchema.parse(JSON.parse(text.text));
+  return { plan: FixSchema.parse(JSON.parse(text.text)), usage: toAiUsage(MODEL, response.usage) };
 }

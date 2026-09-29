@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import type { Config } from "./config.js";
+import { addCredits } from "./credits.js";
 import type { Db } from "./db.js";
 import { planOf } from "./plans.js";
 import { getUser, getUserByCustomer, saveSubscription, setCustomerId, type User } from "./users.js";
@@ -46,6 +47,54 @@ export async function createCheckoutUrl(stripe: Stripe, db: Db, config: Config, 
   return session.url;
 }
 
+/** One-time purchase of a credit pack. The pack must be one the server is configured to sell. */
+export async function createCreditCheckoutUrl(stripe: Stripe, db: Db, config: Config, user: User, priceId: string): Promise<string> {
+  const pack = config.creditPacks.find((p) => p.priceId === priceId);
+  if (!pack) throw new BillingError(400, "Unknown credit pack.");
+  const customer = await ensureCustomer(stripe, db, user);
+  const metadata = { github_id: String(user.githubId), credits: String(pack.credits), kind: "credits" };
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    customer,
+    client_reference_id: String(user.githubId),
+    line_items: [{ price: pack.priceId, quantity: 1 }],
+    metadata,
+    payment_intent_data: { metadata },
+    success_url: `${config.publicUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${config.publicUrl}/billing/cancel`,
+  });
+  if (!session.url) throw new BillingError(502, "Stripe did not return a checkout link. Please try again.");
+  return session.url;
+}
+
+export interface PackInfo {
+  id: string;
+  credits: number;
+  amount: number | null;
+  currency: string | null;
+}
+
+const priceCache = new Map<string, { amount: number | null; currency: string | null; expires: number }>();
+
+/** The packs for sale with their prices from Stripe (cached 10 minutes), so the extension never hard-codes prices. */
+export async function listPacks(stripe: Stripe | null, config: Config): Promise<PackInfo[]> {
+  return Promise.all(
+    config.creditPacks.map(async (p) => {
+      let hit = priceCache.get(p.priceId);
+      if (!hit || hit.expires < Date.now()) {
+        try {
+          const price = await stripe!.prices.retrieve(p.priceId);
+          hit = { amount: price.unit_amount, currency: price.currency, expires: Date.now() + 10 * 60 * 1000 };
+        } catch {
+          hit = { amount: null, currency: null, expires: Date.now() + 60 * 1000 };
+        }
+        priceCache.set(p.priceId, hit);
+      }
+      return { id: p.priceId, credits: p.credits, amount: hit.amount, currency: hit.currency };
+    }),
+  );
+}
+
 export async function createPortalUrl(stripe: Stripe, config: Config, user: User): Promise<string> {
   if (!user.stripeCustomerId) throw new BillingError(409, "There's no subscription to manage yet.");
   const session = await stripe.billingPortal.sessions.create({
@@ -83,8 +132,15 @@ function syncSubscription(db: Db, sub: Stripe.Subscription, eventCreatedSeconds:
 /** Applies one verified Stripe webhook event. Safe to run twice for the same event. */
 export function applyStripeEvent(db: Db, event: Stripe.Event): void {
   switch (event.type) {
+    case "checkout.session.async_payment_succeeded":
+      grantCredits(db, event.data.object);
+      break;
     case "checkout.session.completed": {
       const session = event.data.object;
+      if (session.mode === "payment") {
+        if (session.payment_status === "paid") grantCredits(db, session); // async methods are granted on async_payment_succeeded
+        break;
+      }
       const cust = customerId(session.customer);
       const githubId = Number(session.client_reference_id);
       // Link the customer up front; the subscription events that follow carry the status.
@@ -104,4 +160,14 @@ export function applyStripeEvent(db: Db, event: Stripe.Event): void {
     default:
       break; // Events we don't subscribe to are acknowledged and ignored.
   }
+}
+
+/** Adds the purchased credits to the account. The session id makes it safe to run twice. */
+function grantCredits(db: Db, session: Stripe.Checkout.Session): void {
+  if (session.metadata?.kind !== "credits") return;
+  const githubId = Number(session.client_reference_id);
+  const credits = Number(session.metadata.credits);
+  if (!Number.isInteger(githubId) || !Number.isInteger(credits) || credits <= 0) throw new Error(`Bad credit purchase ${session.id}`);
+  if (!getUser(db, githubId)) throw new Error(`No account for credit purchase ${session.id}`); // Stripe retries
+  addCredits(db, githubId, credits, "purchase", session.id);
 }
