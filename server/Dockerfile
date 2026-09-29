@@ -12,6 +12,5 @@ ENV NODE_ENV=production DATABASE_PATH=/data/launch-check.db
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
-VOLUME /data
 EXPOSE 8787
 CMD ["node", "dist/server.js"]

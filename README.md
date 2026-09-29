@@ -28,6 +28,7 @@ report: 🔴 must fix / 🟡 should fix ◀────────────�
 |---|---|
 | `extension/` | Chrome extension (Manifest V3). The popup, settings and report pages are React, built with Vite. `extension/public/` holds the manifest, icons and the GitHub button script |
 | `server/` | Node + TypeScript API: GitHub access, built-in checks, Claude review and fixes |
+| `web/` | The landing page and privacy policy (React + Vite). Deploy on Cloudflare Pages |
 | `scripts/make-icons.mjs` | Regenerates the extension icons (into `extension/public/icons`) |
 
 ## Run it locally
@@ -116,6 +117,17 @@ stripe listen --forward-to localhost:8787/webhooks/stripe   # prints the whsec_.
 Without the three Stripe variables the server still runs. The Upgrade buttons are hidden and only the free limits apply (set `FREE_AI_REVIEW=1` to try the AI review locally).
 
 Billing API: `GET /api/me` (plan, usage, credits and packs), `POST /api/billing/checkout`, `POST /api/billing/credits`, `POST /api/billing/portal`, `POST /webhooks/stripe`. Scan history: `GET /api/history?owner=&repo=` and `GET /api/scans/:id`.
+
+## Landing page (Cloudflare Pages)
+
+`web/` is a small React site: landing page, pricing and a privacy policy (`/privacy.html`, which the Chrome Web Store asks for). Edit prices, the store link and your contact email in `web/src/config.js`.
+
+```bash
+cd web && npm install && npm run dev   # preview locally
+npm test                               # page tests
+```
+
+On Cloudflare Pages, connect this repo and set **Root directory** `web`, **Build command** `npm run build`, **Build output directory** `dist`.
 
 ## Deploying the server
 
