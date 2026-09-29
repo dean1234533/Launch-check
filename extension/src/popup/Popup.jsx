@@ -55,7 +55,9 @@ export function Popup() {
         {saved && (
           <p className="muted">
             Last scan: {new Date(saved.scannedAt).toLocaleString()} ·{" "}
-            <span className={`badge ${critical ? "critical" : "ok"}`}>{critical ? `${critical} must fix` : "No blockers"}</span>
+            <span className={`badge ${critical ? "critical" : "ok"}`}>
+              {critical ? `${critical} must fix` : saved.aiReview === false ? "Basic checks passed" : "No blockers"}
+            </span>
           </p>
         )}
         <div className="row">

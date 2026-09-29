@@ -9,17 +9,29 @@ const repo = params.get("repo");
 const branch = params.get("branch") || undefined;
 const key = reportKey(owner, repo);
 
+/** A free scan runs only the built-in checks, so a clean result must not claim the app is ready to launch. */
+function headline(report, criticalCount) {
+  if (criticalCount) return "Not ready to launch yet";
+  if (report.aiReview === false) return report.issues.length ? "Some problems found" : "No obvious problems found";
+  return report.issues.length ? "Nearly ready" : "Looks ready to launch 🎉";
+}
+
 function Summary({ report }) {
   const critical = report.issues.filter((i) => i.severity === "critical");
   const warnings = report.issues.length - critical.length;
   return (
     <section className="card">
-      <h2>{critical.length ? "Not ready to launch yet" : report.issues.length ? "Nearly ready" : "Looks ready to launch 🎉"}</h2>
+      <h2>{headline(report, critical.length)}</h2>
       <div className="stats">
         <span className={`badge ${critical.length ? "critical" : "ok"}`}>{critical.length} must fix</span>
         <span className={`badge ${warnings ? "warning" : "ok"}`}>{warnings} should fix</span>
       </div>
       <p>{report.summary}</p>
+      {report.aiReview === false && (
+        <p>
+          <strong>The AI review has not run,</strong> so login rules, payments, data leaks and crashes have not been checked.
+        </p>
+      )}
       <p className="muted">
         Scanned {report.scannedFiles} files on {report.branch} at {report.commitSha.slice(0, 7)} · {new Date(report.scannedAt).toLocaleString()}
         {report.truncated ? " · Large repo: the most important files were scanned." : ""}

@@ -46,6 +46,20 @@ describe("report page", () => {
     expect(chrome.storage.local.set).toHaveBeenCalled(); // report saved for the popup
   });
 
+  it("does not say 'ready to launch' when only the built-in checks ran", async () => {
+    mockServer({ "/api/scan": () => ({ body: { ...scan, issues: [], resolved: [] } }), "/api/me": () => ({ body: accountWithPacks }) });
+    await renderApp();
+    expect(await screen.findByText("No obvious problems found")).toBeTruthy();
+    expect(screen.getByText(/AI review has not run/)).toBeTruthy();
+    expect(screen.queryByText(/Looks ready to launch/)).toBeNull();
+  });
+
+  it("still says ready to launch after a clean AI review", async () => {
+    mockServer({ "/api/scan": () => ({ body: { ...scan, issues: [], resolved: [], aiReview: true } }), "/api/me": () => ({ body: accountWithPacks }) });
+    await renderApp();
+    expect(await screen.findByText(/Looks ready to launch/)).toBeTruthy();
+  });
+
   it("shows an upgrade prompt with credit packs when the scan is over the limit", async () => {
     mockServer({
       "/api/scan": () => ({ status: 402, body: { error: "You've used your free scans.", code: "upgrade_required" } }),
