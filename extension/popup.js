@@ -1,4 +1,4 @@
-import { el, getSettings, parseRepoUrl, reportKey } from "./lib.js";
+import { el, getAccount, getSettings, openBilling, parseRepoUrl, planLine, reportKey } from "./lib.js";
 
 const content = document.getElementById("content");
 
@@ -44,4 +44,26 @@ if (!githubToken) {
       saved && el("button", { onclick: () => open(false) }, "View last report"),
     ),
   );
+}
+
+// Plan and remaining scans, if the server is reachable. Failing here must not break the popup.
+if (githubToken) {
+  try {
+    const account = await getAccount();
+    content.append(
+      el(
+        "p",
+        { class: "muted" },
+        planLine(account),
+        account.billingEnabled &&
+          el(
+            "button",
+            { class: "link", style: "background:none;border:0;padding:0 0 0 6px;color:var(--accent);cursor:pointer;font:inherit;text-decoration:underline", onclick: () => openBilling(account.plan === "pro" ? "portal" : "checkout").then(() => window.close()).catch((e) => alert(e.message)) },
+            account.plan === "pro" ? "Manage" : "Upgrade",
+          ),
+      ),
+    );
+  } catch {
+    // ignore
+  }
 }

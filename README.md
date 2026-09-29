@@ -69,16 +69,52 @@ npm test                  # built-in check tests
 - The GitHub token stays in the browser (`chrome.storage.local`). It is sent with each request and never stored on the server.
 - The server only accepts requests from `chrome-extension://` origins. Set `ALLOWED_ORIGINS` to your published extension ID in production.
 
+## Accounts and plans
+
+There is no separate sign-up. The account is the GitHub user behind the token: the server looks the token up (`GET /user`), keeps a row for that GitHub ID in SQLite, and never stores the token.
+
+| | Free | Pro |
+|---|---|---|
+| Scans | 1 (lifetime) | 10 per billing period |
+| Fixes (pull requests) | 2 (lifetime) | 100 per billing period |
+
+Limits are env vars (`FREE_SCANS`, `PRO_SCANS_PER_PERIOD`, and so on). A scan or fix that fails is refunded. Past-due subscriptions keep access while Stripe retries the payment.
+
+## Stripe setup
+
+1. In the Stripe Dashboard (test mode first) create a **Product** with a **recurring monthly Price** (for example $19). Copy the price ID (`price_...`).
+2. Copy your secret key (`sk_test_...`) from **Developers > API keys**.
+3. Add a webhook endpoint pointing at `https://YOUR-SERVER/webhooks/stripe` for these events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`. Copy its signing secret (`whsec_...`).
+4. Turn on the **Customer portal** (Settings > Billing > Customer portal) so people can cancel and update cards.
+5. Put the values in `server/.env`: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, and `PUBLIC_URL` (the server's public address).
+
+Test locally with the [Stripe CLI](https://stripe.com/docs/stripe-cli):
+
+```bash
+stripe listen --forward-to localhost:8787/webhooks/stripe   # prints the whsec_... to use
+# then click Upgrade in the extension and pay with card 4242 4242 4242 4242
+```
+
+Without the three Stripe variables the server still runs. The Upgrade buttons are hidden and only the free limits apply (raise them with `FREE_SCANS` while developing).
+
+Billing API: `GET /api/me` (plan and usage), `POST /api/billing/checkout`, `POST /api/billing/portal`, `POST /webhooks/stripe`. Scan history: `GET /api/history?owner=&repo=` and `GET /api/scans/:id`.
+
+## Deploying the server
+
+`server/Dockerfile` builds the API. Run it anywhere that gives you HTTPS and a **persistent disk** (Fly.io, Railway, Render, a VPS), and mount the disk at `/data` because the SQLite database lives there (`DATABASE_PATH`). Run a single instance, since usage limits are counted in that one database. Set `ANTHROPIC_API_KEY`, the Stripe variables, `PUBLIC_URL` and `ALLOWED_ORIGINS=chrome-extension://<your extension id>`. Then enter the server URL in the extension settings (or change `DEFAULT_SERVER` in `extension/lib.js` before publishing).
+
 ## Costs
 
-Each scan sends up to `MAX_SCAN_CHARS` (default 400k characters, about 100k tokens) of the most relevant files to Claude. At current prices that is roughly **$0.40–$1 per full scan** and a few cents to about $0.50 per fix, depending on repo size. The server has a simple daily limit per token (10 scans and 30 fixes); replace it with real plan limits before launch.
+Each scan sends up to `MAX_SCAN_CHARS` (default 400k characters, about 100k tokens) of the most relevant files to Claude. At current prices that is roughly **$0.40–$1 per full scan** and a few cents to about $0.50 per fix, depending on repo size. The plan limits above keep usage within what a subscription pays for.
 
-## Roadmap to a paid product
+## Done and still to do
 
-- [ ] **GitHub App** instead of personal tokens: one-click install, and users pick repos
-- [ ] **Accounts + Stripe billing**: 1 free scan, then a monthly plan (for example $19/month for 10 scans and unlimited fixes)
-- [ ] Usage limits stored in a database instead of memory
-- [ ] Scan history and re-scan to confirm fixes (✅ after merge)
-- [ ] Run `npm audit` / OSV for vulnerable dependencies
+- [x] Accounts (by GitHub identity) and Stripe subscriptions: checkout, customer portal and webhooks
+- [x] Usage limits stored in a database, per plan and billing period
+- [x] Scan history, and "no longer reported" after a re-scan
+- [x] Dependency check against OSV.dev (npm `package-lock.json`)
+- [x] Dockerfile for deployment
+- [ ] **GitHub App** instead of personal tokens (one-click install, pick repos). This needs an app registered under your GitHub account, so it is left for you
 - [ ] Build check: install and build the project in a sandbox
-- [ ] Deploy the server (Cloud Run, Fly.io or Railway) and publish to the Chrome Web Store
+- [ ] Dependency check for yarn, pnpm and Python lockfiles
+- [ ] Publish to the Chrome Web Store (needs a privacy policy and store listing)

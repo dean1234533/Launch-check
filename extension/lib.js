@@ -22,22 +22,48 @@ export function parseRepoUrl(url) {
   return { owner, repo: repo.replace(/\.git$/, ""), branch: kind === "tree" && rest.length ? rest.join("/") : undefined };
 }
 
+export class ApiError extends Error {
+  constructor(message, status, code) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** Calls the Launch Check server. With a body it POSTs; without one it GETs. */
 export async function api(path, body) {
   const { serverUrl, githubToken } = await getSettings();
-  if (!githubToken) throw new Error("Add your GitHub token in Settings first.");
+  if (!githubToken) throw new ApiError("Add your GitHub token in Settings first.", 0);
   let res;
   try {
     res = await fetch(`${serverUrl}${path}`, {
-      method: "POST",
+      method: body === undefined ? "GET" : "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${githubToken}` },
-      body: JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new Error(`Can't reach the Launch Check server at ${serverUrl}. Check Settings.`);
+    throw new ApiError(`Can't reach the Launch Check server at ${serverUrl}. Check Settings.`, 0);
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.code);
   return data;
+}
+
+export const getAccount = () => api("/api/me");
+
+/** Opens Stripe Checkout (upgrade) or the Stripe billing portal (manage/cancel) in a new tab. */
+export async function openBilling(kind) {
+  const { url } = await api(kind === "portal" ? "/api/billing/portal" : "/api/billing/checkout", {});
+  await chrome.tabs.create({ url });
+}
+
+/** One-line description of the user's plan and what is left, e.g. "Pro · 7 of 10 scans left". */
+export function planLine(a) {
+  if (a.plan === "pro") {
+    const renews = a.periodEnd ? ` · ${a.cancelAtPeriodEnd ? "ends" : "renews"} ${new Date(a.periodEnd).toLocaleDateString()}` : "";
+    return `Pro · ${a.remaining.scans} of ${a.limits.scans} scans left this period${renews}`;
+  }
+  return `Free · ${a.remaining.scans} of ${a.limits.scans} scan${a.limits.scans === 1 ? "" : "s"} left`;
 }
 
 export function el(tag, attrs = {}, ...children) {

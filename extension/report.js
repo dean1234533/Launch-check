@@ -1,4 +1,4 @@
-import { api, el, reportKey } from "./lib.js";
+import { api, el, getAccount, openBilling, planLine, reportKey } from "./lib.js";
 
 const params = new URLSearchParams(location.search);
 const owner = params.get("owner");
@@ -33,6 +33,52 @@ function fileLink(report, issue) {
   return el("a", { class: "where", href, target: "_blank", rel: "noopener" }, text);
 }
 
+const accountLine = document.getElementById("account");
+
+async function showAccount(account) {
+  try {
+    account ??= await getAccount();
+    accountLine.replaceChildren(
+      planLine(account),
+      account.billingEnabled
+        ? el("button", { class: "link", onclick: () => billing(account.plan === "pro" ? "portal" : "checkout") }, account.plan === "pro" ? "Manage billing" : "Upgrade")
+        : null,
+    );
+  } catch {
+    accountLine.replaceChildren();
+  }
+}
+
+async function billing(kind) {
+  try {
+    await openBilling(kind);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function upgradeCard(err) {
+  const free = err.code === "upgrade_required";
+  return el(
+    "div",
+    { class: "card" },
+    el("h2", {}, free ? "Upgrade to keep scanning" : "Limit reached"),
+    el("p", {}, err.message),
+    free
+      ? el(
+          "div",
+          { class: "actions" },
+          el("button", { class: "primary", onclick: () => billing("checkout") }, "Upgrade to Pro"),
+        )
+      : null,
+  );
+}
+
+// After paying in the Stripe tab, refresh the plan when the user comes back here.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) showAccount();
+});
+
 function renderFixResult(fix) {
   if (!fix) return null;
   if (fix.status === "pr_opened") {
@@ -48,7 +94,13 @@ function renderFixResult(fix) {
   if (fix.status === "no_changes") {
     return el("div", { class: "result fail" }, el("strong", {}, "No code change made. "), fix.message);
   }
-  return el("div", { class: "result fail" }, el("strong", {}, "Fix failed: "), fix.error);
+  return el(
+    "div",
+    { class: "result fail" },
+    el("strong", {}, "Fix failed: "),
+    fix.error,
+    fix.code === "upgrade_required" ? el("button", { class: "primary", style: "margin-left:8px", onclick: () => billing("checkout") }, "Upgrade to Pro") : null,
+  );
 }
 
 function renderIssue(report, issue) {
@@ -62,11 +114,12 @@ function renderIssue(report, issue) {
     try {
       fix = await api("/api/fix", { owner: report.owner, repo: report.repo, branch: report.branch, issue });
     } catch (err) {
-      fix = { status: "error", error: err.message };
+      fix = { status: "error", error: err.message, code: err.code };
     }
     report.fixes = { ...report.fixes, [issue.id]: fix };
     await save(report);
     resultSlot.replaceChildren(renderFixResult(fix));
+    showAccount();
     fixButton.disabled = false;
     fixButton.textContent = fix.status === "pr_opened" ? "🛠 Fix again" : "🛠 Try again";
   });
@@ -129,6 +182,14 @@ function renderReport(report) {
         report.truncated ? " · Large repo: the most important files were scanned." : "",
       ),
     ),
+    report.resolved?.length
+      ? el(
+          "section",
+          { class: "card result" },
+          el("strong", {}, `✅ ${report.resolved.length} ${report.resolved.length === 1 ? "problem" : "problems"} from your last scan no longer show up`),
+          el("ul", {}, report.resolved.map((r) => el("li", {}, r.title))),
+        )
+      : null,
     ...report.issues.map((issue) => renderIssue(report, issue)),
   );
 }
@@ -142,20 +203,25 @@ async function runScan() {
   );
   try {
     const result = await api("/api/scan", { owner, repo, branch });
-    const report = { ...result, scannedAt: Date.now(), fixes: {} };
+    const { account, ...scan } = result;
+    const report = { ...scan, scannedAt: Date.now(), fixes: {} };
+    showAccount(account);
     await save(report);
     renderReport(report);
   } catch (err) {
+    showAccount();
+    const quota = err.code === "upgrade_required" || err.code === "limit_reached";
     content.replaceChildren(
-      el("div", { class: "card" }, el("h2", { class: "error" }, "Scan failed"), el("p", {}, err.message)),
+      quota ? upgradeCard(err) : el("div", { class: "card" }, el("h2", { class: "error" }, "Scan failed"), el("p", {}, err.message)),
     );
     topActions.replaceChildren(
       el("button", { onclick: () => chrome.runtime.openOptionsPage() }, "Settings"),
-      el("button", { class: "primary", onclick: runScan }, "Try again"),
+      quota ? null : el("button", { class: "primary", onclick: runScan }, "Try again"),
     );
   }
 }
 
+showAccount();
 const saved = (await chrome.storage.local.get(key))[key];
 if (params.get("scan") === "1" || !saved) {
   // Drop ?scan=1 so reloading the tab shows the saved report instead of re-scanning.

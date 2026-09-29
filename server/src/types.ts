@@ -48,4 +48,8 @@ export interface ScanResult {
   truncated: boolean;
   issues: Issue[];
   summary: string;
+  /** Saved scan id, so the report can be reopened from history. */
+  scanId?: number;
+  /** Problems the previous scan on this branch reported that this one no longer does. */
+  resolved?: Array<{ id: string; title: string; severity: "critical" | "warning" }>;
 }

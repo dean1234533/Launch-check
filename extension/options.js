@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER, getSettings } from "./lib.js";
+import { DEFAULT_SERVER, el, getAccount, getSettings, openBilling, planLine } from "./lib.js";
 
 const token = document.getElementById("token");
 const server = document.getElementById("server");
@@ -29,3 +29,26 @@ document.getElementById("save").addEventListener("click", async () => {
   await chrome.storage.local.set({ githubToken: token.value.trim(), serverUrl });
   status.textContent = "Saved ✓";
 });
+
+async function showPlan() {
+  const plan = document.getElementById("plan");
+  const actions = document.getElementById("plan-actions");
+  actions.replaceChildren();
+  try {
+    const account = await getAccount();
+    plan.textContent = `${account.login}: ${planLine(account)}`;
+    if (account.billingEnabled) {
+      actions.append(
+        el(
+          "button",
+          { class: account.plan === "pro" ? "" : "primary", onclick: () => openBilling(account.plan === "pro" ? "portal" : "checkout").catch((e) => (plan.textContent = e.message)) },
+          account.plan === "pro" ? "Manage billing" : "Upgrade to Pro",
+        ),
+      );
+    }
+  } catch (err) {
+    plan.textContent = settings.githubToken ? err.message : "Save your token to see your plan.";
+  }
+}
+await showPlan();
+document.getElementById("save").addEventListener("click", () => setTimeout(showPlan, 300));
