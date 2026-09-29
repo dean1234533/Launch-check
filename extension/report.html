@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Launch Check report</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    main { max-width: 860px; margin: 0 auto; padding: 28px 16px 64px; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    .stats { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 16px; }
+    .issue { margin-top: 12px; }
+    .issue-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+    .issue-head h3 { margin: 0; flex: 1 1 320px; }
+    .where { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    details { margin-top: 10px; }
+    pre {
+      white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; padding: 10px 12px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .result { margin-top: 10px; padding: 10px 12px; border-radius: 6px; background: var(--ok-bg); }
+    .result.fail { background: var(--critical-bg); }
+    .result ul { margin: 6px 0 0; padding-left: 20px; }
+    .spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; margin: 24px 0 12px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>🚀 Launch Check</h1>
+        <div id="repo" class="muted"></div>
+      </div>
+      <div class="actions" id="top-actions"></div>
+    </header>
+    <div id="content"></div>
+  </main>
+  <script type="module" src="report.js"></script>
+</body>
+</html>

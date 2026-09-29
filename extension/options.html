@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Launch Check settings</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    main { max-width: 560px; margin: 32px auto; padding: 0 16px; }
+    .row { display: flex; gap: 8px; margin-top: 18px; align-items: center; }
+    ol { padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Launch Check settings</h1>
+    <div class="card">
+      <h3>1. Connect GitHub</h3>
+      <p class="muted">Create a <strong>fine-grained personal access token</strong> so Launch Check can read your code and open pull requests with fixes:</p>
+      <ol class="muted">
+        <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → New fine-grained token</a>.</li>
+        <li>Under <em>Repository access</em>, pick only the repos you want to scan.</li>
+        <li>Under <em>Permissions</em>, set <strong>Contents: Read and write</strong> and <strong>Pull requests: Read and write</strong>.</li>
+        <li>Generate the token and paste it below.</li>
+      </ol>
+      <label for="token">GitHub token</label>
+      <input id="token" type="password" autocomplete="off" placeholder="github_pat_…" />
+      <p class="muted" style="margin-top:6px">Stored only in this browser. It is sent to the Launch Check server with each scan and is not saved there.</p>
+
+      <h3 style="margin-top:20px">2. Server</h3>
+      <label for="server">Launch Check server URL</label>
+      <input id="server" type="url" placeholder="http://localhost:8787" />
+
+      <div class="row">
+        <button id="save" class="primary">Save</button>
+        <span id="status" class="muted" role="status"></span>
+      </div>
+    </div>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>
