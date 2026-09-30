@@ -78,7 +78,7 @@ export function Options() {
 
         <h3 style={{ marginTop: 20 }}>2. Server</h3>
         <label htmlFor="server">Launch Check server URL</label>
-        <input id="server" type="url" placeholder="http://localhost:8787" value={server} onChange={(e) => setServer(e.target.value)} />
+        <input id="server" type="url" placeholder={DEFAULT_SERVER} value={server} onChange={(e) => setServer(e.target.value)} />
 
         <h3 style={{ marginTop: 20 }}>3. Your plan</h3>
         {account?.plan ? (

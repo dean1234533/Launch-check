@@ -1,6 +1,7 @@
 // Shared helpers for extension pages (popup, report, options).
 
-export const DEFAULT_SERVER = "http://localhost:8787";
+// The hosted Launch Check server. Developers can point the extension at http://localhost:8787 in Settings.
+export const DEFAULT_SERVER = "https://launch-check-production.up.railway.app";
 
 export async function getSettings() {
   const { serverUrl, githubToken } = await chrome.storage.local.get(["serverUrl", "githubToken"]);
