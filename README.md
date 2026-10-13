@@ -1,4 +1,18 @@
-# Launch Check
+# Quick Scan First
+
+**Check your GitHub repository before you ship, then review a pull request with the fix.**
+
+## Install the Chrome extension
+
+[**Add Quick Scan First to Chrome**](https://chromewebstore.google.com/detail/goimgdjenphgchhcbgjafdbimjogafad) · [**See the walkthrough and pricing**](https://www.dean-da-dev.co.uk/quick-scan-first/)
+
+Quick Scan First helps developers check for exposed credentials, unsafe database rules, dependency vulnerabilities and other release risks. Optional AI reviews cover authentication, ownership, payment and webhook implementation issues. Generated fixes are pull requests for you to inspect and merge.
+
+Start with 3 free built-in scans and 2 free fixes. See the [official product page](https://www.dean-da-dev.co.uk/quick-scan-first/) for current paid plans and credit pricing. AI findings and fixes should always be reviewed; the extension is not a security audit or guarantee.
+
+This repository uses the internal project name **Launch Check**. The documentation below describes the development setup.
+
+---
 
 **Scan your code before you launch. Fix what's wrong in one click.**
 
@@ -151,3 +165,4 @@ Each scan sends up to `MAX_SCAN_CHARS` (default 250k characters, about 60k token
 - [ ] Build check: install and build the project in a sandbox
 - [ ] Dependency check for yarn, pnpm and Python lockfiles
 - [ ] Publish to the Chrome Web Store (needs a privacy policy and store listing)
+
