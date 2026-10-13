@@ -4,7 +4,7 @@
 
 ## Install the Chrome extension
 
-[**Add Quick Scan First to Chrome**](https://chromewebstore.google.com/detail/goimgdjenphgchhcbgjafdbimjogafad) · [**See the walkthrough and pricing**](https://www.dean-da-dev.co.uk/quick-scan-first/)
+[**Add Quick Scan First to Chrome**](https://chromewebstore.google.com/detail/quick-scan-first/goimgdjenphgchhcbgjafdbimjogafad) · [**See the walkthrough and pricing**](https://www.dean-da-dev.co.uk/quick-scan-first/)
 
 Quick Scan First helps developers check for exposed credentials, unsafe database rules, dependency vulnerabilities and other release risks. Optional AI reviews cover authentication, ownership, payment and webhook implementation issues. Generated fixes are pull requests for you to inspect and merge.
 
