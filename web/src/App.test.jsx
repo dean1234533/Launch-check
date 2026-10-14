@@ -5,15 +5,18 @@ import { Privacy } from "./Privacy.jsx";
 import { config } from "./config.js";
 
 describe("landing page", () => {
-  it("shows the pitch, the prices from config, and a Coming soon button until a store link is set", () => {
+  it("shows the pitch, the prices from config, and an Add to Chrome button linking to the store", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/Scan your code before you launch/);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/GitHub security scanner.*for AI-built apps/);
+    expect(screen.getByText(/From code findings to a pull request/)).toBeTruthy();
+    expect(screen.getByText(new RegExp(`${config.plans.free.scans} free scans and ${config.plans.free.fixes} free fixes`))).toBeTruthy();
     expect(screen.getByText(config.plans.pro.price)).toBeTruthy();
     for (const p of config.packs) expect(screen.getByText(p.price)).toBeTruthy();
-    const buttons = screen.getAllByText(/Coming soon/);
+    expect(config.storeUrl).toMatch(/^https:\/\/chromewebstore\.google\.com\/detail\//);
+    const buttons = screen.getAllByText(/Add to Chrome/);
     expect(buttons.length).toBeGreaterThan(0);
-    expect(buttons[0].getAttribute("aria-disabled")).toBe("true");
-    expect(buttons[0].getAttribute("href")).toBeNull();
+    expect(buttons[0].closest("a").getAttribute("href")).toBe(config.storeUrl);
+    expect(screen.queryByText(/Coming soon/)).toBeNull();
   });
   it("answers the safety questions", () => {
     render(<App />);

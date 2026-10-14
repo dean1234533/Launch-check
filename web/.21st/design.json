@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "project": {
+    "name": "quick-scan-first-web",
+    "productType": "GitHub pre-launch code security scanner",
+    "stack": [
+      "react",
+      "vite"
+    ]
+  },
+  "sources": {
+    "tokens": [
+      "src/styles.css"
+    ],
+    "components": [
+      "src/Layout.jsx",
+      "src/ContentPages.jsx",
+      "src/App.jsx"
+    ],
+    "assets": [
+      "public/images"
+    ],
+    "instructions": []
+  },
+  "design": {
+    "colorMode": "dark",
+    "colors": {},
+    "typography": {},
+    "spacing": {},
+    "radius": {},
+    "shadows": {},
+    "motion": {},
+    "density": "unknown"
+  },
+  "components": {
+    "installed": [],
+    "preferredPrimitives": [
+      "Nav, Footer, StoreButton, ContentPage, SectionHeading",
+      "Native details/summary FAQ controls"
+    ],
+    "patterns": []
+  },
+  "constraints": {
+    "must": [
+      "Preserve existing dark and mint visual design",
+      "Describe implemented scope accurately",
+      "Render complete crawlable initial HTML"
+    ],
+    "avoid": []
+  },
+  "decisions": [],
+  "evidence": [
+    {
+      "fact": "project.stack:react",
+      "source": "package.json"
+    },
+    {
+      "fact": "project.stack:vite",
+      "source": "package.json"
+    }
+  ],
+  "generatedAt": "2026-10-14T10:40:13.825Z"
+}

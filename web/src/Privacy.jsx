@@ -8,7 +8,7 @@ export function Privacy() {
       <main className="wrap prose">
         <h1>Privacy policy</h1>
         <p className="muted">Last updated {config.lastUpdated}</p>
-        <p>Launch Check is a Chrome extension and a server that scans GitHub repositories for launch problems. This page explains what data is handled and why.</p>
+        <p>Quick Scan First is a Chrome extension and a server that scans GitHub repositories for launch problems. This page explains what data is handled and why.</p>
 
         <h2>What stays in your browser</h2>
         <ul>
@@ -16,7 +16,7 @@ export function Privacy() {
           <li>Your most recent report for each repository is saved in the browser so you can reopen it.</li>
         </ul>
 
-        <h2>What is sent to the Launch Check server</h2>
+        <h2>What is sent to the Quick Scan First server</h2>
         <ul>
           <li>With each scan, fix, or account request, the extension sends your GitHub token and the repository name.</li>
           <li>The server uses the token only to act on GitHub for you: to identify your account, read repository files, and, when you press “Fix it for me”, create a branch and open a pull request. <strong>The token is not saved in our database.</strong></li>

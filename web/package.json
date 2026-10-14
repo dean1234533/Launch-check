@@ -1,11 +1,12 @@
 {
-  "name": "launch-check-web",
+  "name": "quick-scan-first-web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/build.mjs",
+    "seo:generate": "node scripts/generate-static.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },

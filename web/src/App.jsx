@@ -1,66 +1,76 @@
+import { productPages } from './content.js';
 import { config } from "./config.js";
 import { Footer, Nav, StoreButton } from "./Layout.jsx";
 
+// "/" on its own site, "/quick-scan-first/" when served from a subfolder of another site.
+const base = import.meta.env.BASE_URL;
+
 const { free, pro } = config.plans;
 
-function ExampleReport() {
+function Icon({ name, size = 18 }) {
+  const paths = {
+    scan: <><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" /><path d="m8 12 2.5 2.5L16 9" /></>,
+    shield: <><path d="M12 3 5 6v5c0 4.8 2.9 8 7 10 4.1-2 7-5.2 7-10V6l-7-3Z" /><path d="m9 12 2 2 4-4" /></>,
+    branch: <><circle cx="6" cy="5" r="2" /><circle cx="18" cy="7" r="2" /><circle cx="6" cy="19" r="2" /><path d="M6 7v10M8 7h4a4 4 0 0 1 4 4v4" /></>,
+    search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
+    arrow: <><path d="M5 12h14M14 7l5 5-5 5" /></>,
+    check: <path d="m5 12 4 4L19 6" />,
+    x: <path d="M6 6l12 12M18 6 6 18" />,
+    github: <><path d="M9 19c-4 1.2-4-2-5.5-2.5M14.5 21v-3.1c0-1 .1-1.7-.5-2.4 2.8-.3 5.7-1.4 5.7-6.2a4.8 4.8 0 0 0-1.3-3.4 4.5 4.5 0 0 0-.1-3.4s-1-.3-3.5 1.3a12 12 0 0 0-6.3 0C6 2.2 5 2.5 5 2.5a4.5 4.5 0 0 0-.1 3.4 4.8 4.8 0 0 0-1.3 3.4c0 4.8 2.9 5.9 5.7 6.2-.5.5-.7 1.2-.7 2.4V21" /></>,
+    lock: <><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
+  };
+  return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
+function ExampleReport({ children }) {
   return (
-    <div className="card mock" role="img" aria-label="Example Launch Check report with two problems, each with a Fix it for me button">
-      <div className="tag">Example report (illustration)</div>
-      <div className="finding">
-        <span className="badge critical">Must fix</span>
-        <strong>A secret Stripe key is written in your code</strong>
-        <span className="where">src/checkout.js:12</span>
-        <div><span className="fake-btn">🛠 Fix it for me</span></div>
+    <div className="product-preview has-robot-video">
+      <div className="preview-glow" />
+      <div className="hero-robot-media">
+        <video className="hero-robot-video" src={`${base}quick-scan-robot.mp4`} muted loop playsInline autoPlay preload="metadata" aria-label="Quick Scan First security robot transformation" />
       </div>
-      <div className="finding">
-        <span className="badge critical">Must fix</span>
-        <strong>Your database lets anyone read and write</strong>
-        <span className="where">firestore.rules:3</span>
-        <div><span className="fake-btn">🛠 Fix it for me</span></div>
-      </div>
-      <div className="finding">
-        <span className="badge warning">Should fix</span>
-        <strong>No .gitignore, so secrets could be committed</strong>
-        <span className="where">.gitignore</span>
-      </div>
+      <div className="hero-video-shade" aria-hidden="true" />
+      {children}
     </div>
   );
 }
 
+function SectionVisual({ className, src, alt, eyebrow, title, video = false }) {
+  return (
+    <figure className={`section-visual ${className}`}>
+      {video
+        ? <video src={src} aria-label={alt} autoPlay muted loop playsInline preload="metadata" />
+        : <img src={src} alt={alt} width="1200" height="750" loading="lazy" decoding="async" />}
+      <figcaption><span>{eyebrow}</span><strong>{title}</strong></figcaption>
+    </figure>
+  );
+}
+
 const steps = [
-  { title: "Scan", body: "Open your repo on GitHub and click “Scan before launch”. Launch Check reads your code and looks for problems that hurt in production." },
-  { title: "Read the report", body: "Every problem is in plain English: what is wrong, why it matters, and where. Must-fix problems come first." },
-  { title: "Fix it in one click", body: "Press “Fix it for me” and the AI writes the change and opens a pull request. Or copy a ready-made prompt for Cursor, Lovable, Claude or ChatGPT." },
+  { icon: "github", title: "Open a repository", body: "Quick Scan First reads the GitHub repository you choose using a fine-grained token you control." },
+  { icon: "search", title: "Run a focused review", body: "Static checks and AI review look for secrets, unsafe permissions, broken payments and production risks." },
+  { icon: "branch", title: "Ship a reviewed fix", body: "Generate a pull request, inspect the changes on GitHub, and merge only when you are satisfied." },
 ];
 
 const checks = {
-  "Every scan (free)": [
-    "Committed .env files",
-    "Hardcoded secrets: Stripe, OpenAI, Anthropic, AWS, GitHub and Slack keys, private keys",
-    "Firebase rules that allow everyone",
-    "Supabase tables with Row Level Security turned off",
-    "Known security holes in the npm packages you use",
-    "A missing .gitignore",
-  ],
-  "AI review (Pro or credits)": [
-    "Missing login and ownership checks",
-    "Payment and webhook mistakes",
-    "Crashes on important paths",
-    "Data leaks and broken configuration",
-    "It is told to report only problems it can point to in your code",
-  ],
+  "Included with every scan": ["Committed environment files", "Hardcoded API keys and private keys", "Open Firebase and Supabase access", "Known npm dependency vulnerabilities", "Missing repository safeguards"],
+  "Deep review with Pro or credits": ["Missing authentication and ownership checks", "Payment and webhook implementation mistakes", "Crashes across important user paths", "Data exposure and broken configuration", "Evidence linked directly to your source code"],
 };
 
-const faqs = [
-  ["Will it change my code without asking?", "No. A fix is always a pull request on a new branch. Nothing changes until you review and merge it. It will not touch .github/workflows or anything outside your repo."],
-  ["What does it need access to?", "A GitHub fine-grained token that you create, limited to the repos you choose, with read and write access to Contents and Pull requests. You can delete the token any time."],
-  ["Is my code stored?", "No. Your code is read when you scan and is not saved on our servers. For the AI review and for fixes, the relevant files are sent to Anthropic’s API to be analysed. The privacy policy has the details."],
-  ["Does it work on private repos?", "Yes, if your token has access to them."],
-  ["Can the AI be wrong?", "Yes. It is told to report only real, visible problems, but it can miss things or flag something that isn’t one. Launch Check is a helpful second pair of eyes, not a security audit or a guarantee. Always review a pull request before merging."],
-  ["What is a credit?", "Credits are pay-as-you-go. An AI scan costs 5 credits and a fix costs 2. They never expire. A scan or fix that fails gives its credits back."],
-  ["Can I cancel Pro?", "Yes, any time from the billing page in the extension. You keep Pro until the end of the period you paid for."],
+export const faqs = [
+  ["Will it change my code without asking?", "No. A fix is always a pull request on a new branch. Nothing changes until you review and merge it. Quick Scan First will not touch workflows or anything outside your repository."],
+  ["What access does it need?", "A fine-grained GitHub token, limited to repositories you choose, with read and write access to Contents and Pull requests. You can revoke it at any time."],
+  ["Is my source code stored?", "No. Code is read during a scan and is not saved on our servers. Relevant files are sent to Anthropic only when an AI review or fix needs them."],
+  ["Does it work with private repositories?", "Yes, provided your fine-grained token has access to them."],
+  ["Can the AI be wrong?", "Yes. Quick Scan First is a useful second pair of eyes, not a security audit or guarantee. Always review generated pull requests before merging."],
+  ["What is a credit?", `Credits are pay-as-you-go. An AI scan costs ${config.credits.scan} credits and a fix costs ${config.credits.fix}. They do not expire, and failed operations are refunded.`],
+  ["Are the prices shown with VAT?", "No. Prices exclude VAT, which is added at checkout where it applies, so you always see the final total before you pay."],
+  ["Can I cancel Pro?", "Yes. Cancel from the billing page in the extension and keep Pro access until the end of the paid period."],
 ];
+
+function SectionHeading({ eyebrow, title, body }) {
+  return <div className="section-heading"><span className="kicker">{eyebrow}</span><h2>{title}</h2>{body && <p>{body}</p>}</div>;
+}
 
 export function App() {
   return (
@@ -68,107 +78,55 @@ export function App() {
       <Nav home />
       <main>
         <section className="hero">
-          <div className="wrap hero-grid">
-            <div>
-              <h1>Scan your code before you launch.</h1>
-              <p className="lede">Launch Check finds exposed API keys, open databases, missing auth checks and payment bugs in your GitHub repo, then opens a pull request that fixes them.</p>
-              <div className="cta">
-                <StoreButton />
-                <a className="btn" href="#how">See how it works</a>
+          <div className="hero-grid" aria-hidden="true" />
+          <div className="wrap hero-layout">
+            <ExampleReport>
+              <div className="hero-copy">
+                <div className="announcement"><span>New</span> AI-assisted pull request fixes</div>
+                <h1>GitHub security scanner <br />for AI-built apps.</h1>
+                <p className="lede">Review your GitHub repository before launch. Check exposed secrets, unsafe database rules and npm dependencies, then use an optional AI review for authentication and payment risks. Turn findings into fix prompts or pull requests you review.</p>
+                <div className="cta"><StoreButton /><a className="btn secondary" href="#how">Explore the workflow <Icon name="arrow" size={15} /></a></div>
+                <p className="cta-note">{free.scans} free scans and {free.fixes} free fixes. Pro from {pro.price} a month + VAT.</p>
+                <div className="hero-proof"><span><Icon name="check" size={14} /> No code stored</span><span><Icon name="check" size={14} /> You approve every change</span></div>
               </div>
-              <p className="muted">Built for people who make apps with AI tools and aren’t sure what to check before going live.</p>
-            </div>
-            <ExampleReport />
+            </ExampleReport>
           </div>
         </section>
 
-        <section id="how" className="alt">
-          <div className="wrap">
-            <h2>How it works</h2>
-            <div className="grid3">
-              {steps.map((s, i) => (
-                <div className="card" key={s.title}>
-                  <span className="step-num" aria-hidden="true">{i + 1}</span>
-                  <h3>{s.title}</h3>
-                  <p className="muted">{s.body}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+        <section className="signal-strip"><div className="wrap signal-grid"><span>Built for teams shipping with</span><strong>Cursor</strong><strong>Lovable</strong><strong>Claude</strong><strong>ChatGPT</strong><strong>GitHub</strong></div></section>
 
-        <section id="checks">
+        <section className="demo-section" aria-labelledby="demo-title">
           <div className="wrap">
-            <h2>What it checks</h2>
-            <div className="grid2">
-              {Object.entries(checks).map(([title, items]) => (
-                <div className="card" key={title}>
-                  <h3>{title}</h3>
-                  <ul className="checks">
-                    {items.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+            <div className="demo-heading">
+              <span className="kicker">Product walkthrough</span>
+              <h2 id="demo-title">See Quick Scan First in action.</h2>
+              <p>From opening a repository to reviewing the findings and preparing a fix.</p>
+            </div>
+            <div className="demo-frame">
+              <div className="demo-frame-bar" aria-hidden="true"><span><i /><i /><i /></span><b>Quick Scan First · Product explainer</b></div>
+              <video controls playsInline preload="metadata" poster={`${base}video/quick-scan-first-explainer-poster.webp?v=4`} aria-label="Quick Scan First product explainer">
+                <source src={`${base}video/quick-scan-first-explainer.mp4?v=2`} type="video/mp4" />
+                Your browser does not support embedded video.
+              </video>
             </div>
           </div>
         </section>
 
-        <section id="pricing" className="alt">
-          <div className="wrap">
-            <h2>Pricing</h2>
-            <p className="lede">Start free. Pay monthly, or buy credits and pay only when you scan.</p>
-            <div className="grid2" style={{ marginTop: 24 }}>
-              <div className="card">
-                <h3>Free</h3>
-                <div className="price">{free.price}</div>
-                <ul className="checks">
-                  <li>{free.scans} scans with the built-in checks</li>
-                  <li>{free.fixes} one-click fixes</li>
-                  <li>Copy-paste prompts for every problem</li>
-                </ul>
-              </div>
-              <div className="card featured">
-                <h3>Pro</h3>
-                <div className="price">
-                  {pro.price} <small>/ {pro.period}</small>
-                </div>
-                <ul className="checks">
-                  <li>{pro.scans} full AI code reviews a month</li>
-                  <li>{pro.fixes} one-click fixes a month</li>
-                  <li>Everything in Free</li>
-                  <li>Cancel any time</li>
-                </ul>
-              </div>
-            </div>
-            <div className="card" style={{ marginTop: 16 }}>
-              <h3>Pay as you go</h3>
-              <p className="muted">Credits work with or without Pro and never expire. An AI scan is 5 credits, a fix is 2.</p>
-              <div className="packs">
-                {config.packs.map((p) => (
-                  <div className="pack" key={p.credits}>
-                    <b>{p.price}</b>
-                    <span className="muted">{p.credits} credits</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="cta"><StoreButton /></div>
-          </div>
-        </section>
+        <section id="why" className="section-block"><div className="wrap"><SectionHeading eyebrow="Review before release" title="From code findings to a pull request you control." body="Start with built-in checks, then choose deeper review when your launch needs it." /><div className="compare-grid"><article className="compare-card"><span className="plan-name">Built-in checks</span><ul><li><Icon name="check" size={14} />Check selected repository files for known risky patterns</li><li><Icon name="check" size={14} />Find committed .env files, possible secrets and unsafe database rules</li><li><Icon name="check" size={14} />Check supported npm lockfiles against OSV.dev</li></ul></article><article className="compare-card featured"><span className="plan-name">AI review and fixes</span><ul><li><Icon name="check" size={14} />Investigate likely authentication, ownership and payment mistakes with Pro or credits</li><li><Icon name="check" size={14} />Copy a fix prompt or request an AI-assisted pull request</li><li><Icon name="check" size={14} />Inspect the diff and test the change before merging</li></ul><a href={`${base}compare-code-security-tools/`}>Compare security tool workflows →</a></article></div></div></section>
 
-        <section id="faq">
-          <div className="wrap">
-            <h2>Questions</h2>
-            {faqs.map(([q, a]) => (
-              <details key={q}>
-                <summary>{q}</summary>
-                <p>{a}</p>
-              </details>
-            ))}
-          </div>
-        </section>
+        <section id="how" className="section-block"><div className="wrap"><SectionHeading eyebrow="Workflow" title="From repository to reviewed fix." body="A focused release check that fits the way you already work." /><div className="workflow-grid">{steps.map((step, index) => <article className="workflow-card" key={step.title}><div className="step-top"><span className="step-icon"><Icon name={step.icon} /></span><span className="step-index">0{index + 1}</span></div><h3>{step.title}</h3><p>{step.body}</p></article>)}</div><SectionVisual className="workflow-visual" src={`${base}images/automated-fix.webp`} alt="Quick Scan First robot repairing a vulnerable code pathway" eyebrow="Automated remediation" title="A reviewed fix, ready for your pull request." /></div></section>
+
+        <section id="checks" className="section-block tinted"><div className="wrap checks-layout"><div className="checks-intro"><SectionHeading eyebrow="Coverage" title="The release risks that are easy to miss." body="Fast deterministic checks for known mistakes, with deeper reasoning when you need it." /><div className="assurance"><Icon name="lock" size={18} /><p><strong>Private by design.</strong><br />Your source is processed for the scan, not stored as a copy.</p></div><SectionVisual className="checks-visual" src={`${base}images/repository-scan.mp4`} alt="Quick Scan First robot actively scanning repository pathways for security risks" eyebrow="Repository-wide coverage" title="Find the risk hiding between files." video /></div><div className="check-groups">{Object.entries(checks).map(([title, items], groupIndex) => <article className={`check-card ${groupIndex ? "advanced" : ""}`} key={title}><div className="check-card-head"><span><Icon name={groupIndex ? "scan" : "shield"} /></span><h3>{title}</h3>{groupIndex === 1 && <b>AI</b>}</div><ul>{items.map((item) => <li key={item}><Icon name="check" size={14} />{item}</li>)}</ul></article>)}</div></div></section>
+
+        <section id="pricing" className="section-block"><div className="wrap"><SectionHeading eyebrow="Pricing" title="Start with the basics. Upgrade when you need depth." body="Use the free checks, subscribe for regular reviews, or buy credits when a launch needs extra attention." /><div className="pricing-grid"><article className="price-card"><span className="plan-name">Free</span><div className="price"><strong>{free.price}</strong><span>forever</span></div><p>For getting the fundamentals right.</p><ul><li><Icon name="check" size={14} />{free.scans} built-in scans</li><li><Icon name="check" size={14} />{free.fixes} one-click fixes</li><li><Icon name="check" size={14} />Ready-made fix prompts</li></ul><StoreButton primary={false} /></article><article className="price-card featured"><div className="recommended">Most capable</div><span className="plan-name">Pro</span><div className="price"><strong>{pro.price}</strong><span>+ VAT / {pro.period}</span></div><p>For builders shipping products regularly.</p><ul><li><Icon name="check" size={14} />{pro.scans} full AI reviews / month</li><li><Icon name="check" size={14} />{pro.fixes} one-click fixes / month</li><li><Icon name="check" size={14} />Everything in Free</li><li><Icon name="check" size={14} />Cancel at any time</li></ul><StoreButton /></article><article className="price-card credits"><span className="plan-name">Credits</span><div className="price"><strong>Pay once</strong></div><p>Extra capacity without a subscription.</p><div className="pack-list">{config.packs.map((pack) => <div className="pack-row" key={pack.credits}><span>{pack.credits} credits</span><strong>{pack.price}</strong></div>)}</div><span className="credit-note">AI scan: {config.credits.scan} credits · Fix: {config.credits.fix} credits</span><span className="credit-note">Prices exclude VAT.</span></article></div></div></section>
+
+        <section id="faq" className="section-block faq-section"><div className="wrap faq-layout"><SectionHeading eyebrow="Questions" title="The details, clearly answered." body="How access, code handling, AI reviews and billing work." /><div className="faq-list">{faqs.map(([question, answer]) => <details key={question}><summary>{question}<span>+</span></summary><p>{answer}</p></details>)}</div></div></section>
+
+        <section className="section-block"><div className="wrap"><SectionHeading eyebrow="Choose your review" title="Explore the checks behind your launch." body="Find the workflow that fits your repository and the risks you need to investigate." /><div className="knowledge-links">{productPages.map(page => <a href={`${base}${page.slug}/`} key={page.slug}><span>{page.kind}</span><h3>{page.title}</h3><p>{page.description}</p><b>Explore the check →</b></a>)}</div></div></section>
+
+        <section className="section-block knowledge-preview"><div className="wrap"><SectionHeading eyebrow="Security knowledge" title="Know what to check before you ship." body="Focused guides for repository security, exposed credentials, database access and repeatable pre-launch review." /><div className="knowledge-links"><a href={`${base}blog/github-security-checklist-before-launch/`}><span>Checklist</span><h3>GitHub security checklist before launch</h3><b>Read guide →</b></a><a href={`${base}blog/remove-exposed-api-keys-from-github/`}><span>Incident guide</span><h3>Remove an exposed API key safely</h3><b>Read guide →</b></a><a href={`${base}blog/firebase-supabase-security-rules/`}><span>Database security</span><h3>Firebase and Supabase rules to check</h3><b>Read guide →</b></a></div></div></section>
+
+        <section className="final-cta"><div className="wrap final-cta-inner has-launch-visual"><div><span className="kicker">Before you ship</span><h2>Give your code one more pair of eyes.</h2></div><StoreButton /><SectionVisual className="launch-visual" src={`${base}images/launch-ready.webp`} alt="Quick Scan First robot confirming that a repository is ready to launch" eyebrow="Ready signal" title="Ship with confidence." /></div></section>
       </main>
       <Footer />
     </>
