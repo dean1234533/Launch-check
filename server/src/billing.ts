@@ -6,7 +6,8 @@ import { planOf } from "./plans.js";
 import { getUser, getUserByCustomer, saveSubscription, setCustomerId, type User } from "./users.js";
 
 export function makeStripe(config: Config): Stripe | null {
-  return config.stripe ? new Stripe(config.stripe.secretKey) : null;
+  // Workers have no Node http module, so Stripe goes through fetch.
+  return config.stripe ? new Stripe(config.stripe.secretKey, { httpClient: Stripe.createFetchHttpClient() }) : null;
 }
 
 /** Finds or creates the Stripe customer for this user, so repeat checkouts reuse one customer. */
@@ -47,20 +48,44 @@ export async function createCheckoutUrl(stripe: Stripe, db: Db, config: Config, 
   return session.url;
 }
 
+const resolvedPrices = new Map<string, { priceId: string | null; expires: number }>();
+
+/**
+ * CREDIT_PACKS entries may be a Stripe price id (price_...) or a product id (prod_...).
+ * For a product, its default price is used, so a pack can be set up with whichever id is handy.
+ */
+export async function resolvePriceId(stripe: Stripe, id: string): Promise<string | null> {
+  if (!id.startsWith("prod_")) return id;
+  const hit = resolvedPrices.get(id);
+  if (hit && hit.expires > Date.now()) return hit.priceId;
+  let priceId: string | null = null;
+  try {
+    const product = await stripe.products.retrieve(id);
+    const price = product.default_price;
+    priceId = typeof price === "string" ? price : (price?.id ?? null);
+  } catch {
+    priceId = null;
+  }
+  resolvedPrices.set(id, { priceId, expires: Date.now() + (priceId ? 10 * 60 * 1000 : 60 * 1000) });
+  return priceId;
+}
+
 /** One-time purchase of a credit pack. The pack must be one the server is configured to sell. */
 export async function createCreditCheckoutUrl(stripe: Stripe, db: Db, config: Config, user: User, priceId: string): Promise<string> {
   const pack = config.creditPacks.find((p) => p.priceId === priceId);
   if (!pack) throw new BillingError(400, "Unknown credit pack.");
+  const price = await resolvePriceId(stripe, pack.priceId);
+  if (!price) throw new BillingError(503, "That credit pack isn't available right now.");
   const customer = await ensureCustomer(stripe, db, user);
   const metadata = { github_id: String(user.githubId), credits: String(pack.credits), kind: "credits" };
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     customer,
     client_reference_id: String(user.githubId),
-    line_items: [{ price: pack.priceId, quantity: 1 }],
+    line_items: [{ price, quantity: 1 }],
     metadata,
     payment_intent_data: { metadata },
-    success_url: `${config.publicUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+    success_url: `${config.publicUrl}/billing/credits-success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${config.publicUrl}/billing/cancel`,
   });
   if (!session.url) throw new BillingError(502, "Stripe did not return a checkout link. Please try again.");
@@ -78,12 +103,14 @@ const priceCache = new Map<string, { amount: number | null; currency: string | n
 
 /** The packs for sale with their prices from Stripe (cached 10 minutes), so the extension never hard-codes prices. */
 export async function listPacks(stripe: Stripe | null, config: Config): Promise<PackInfo[]> {
-  return Promise.all(
+  const packs = await Promise.all(
     config.creditPacks.map(async (p) => {
       let hit = priceCache.get(p.priceId);
       if (!hit || hit.expires < Date.now()) {
         try {
-          const price = await stripe!.prices.retrieve(p.priceId);
+          const priceId = await resolvePriceId(stripe!, p.priceId);
+          if (!priceId) throw new Error("no price");
+          const price = await stripe!.prices.retrieve(priceId);
           hit = { amount: price.unit_amount, currency: price.currency, expires: Date.now() + 10 * 60 * 1000 };
         } catch {
           hit = { amount: null, currency: null, expires: Date.now() + 60 * 1000 };
@@ -93,6 +120,8 @@ export async function listPacks(stripe: Stripe | null, config: Config): Promise<
       return { id: p.priceId, credits: p.credits, amount: hit.amount, currency: hit.currency };
     }),
   );
+  // A pack Stripe can't find (a typo or placeholder id) is hidden, rather than shown with no price.
+  return packs.filter((p) => p.amount !== null);
 }
 
 export async function createPortalUrl(stripe: Stripe, config: Config, user: User): Promise<string> {

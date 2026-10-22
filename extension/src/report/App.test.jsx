@@ -71,6 +71,18 @@ describe("report page", () => {
     expect(screen.queryByText("Try again")).toBeNull();
   });
 
+  it("keeps the last report on screen when a re-scan hits the free limit", async () => {
+    installChrome({ githubToken: "tok", "report:a/b": { ...scan, resolved: [], scannedAt: Date.now(), fixes: {} } });
+    mockServer({
+      "/api/scan": () => ({ status: 402, body: { error: "You've used your free scans. Upgrade to Pro to keep going.", code: "upgrade_required" } }),
+      "/api/me": () => ({ body: accountWithPacks }),
+    });
+    await renderApp("?owner=a&repo=b&scan=1"); // what the GitHub button opens
+    expect(await screen.findByText("Upgrade to keep scanning")).toBeTruthy();
+    expect(screen.getByText("Database is open to everyone")).toBeTruthy(); // the saved report is still there
+    expect(screen.getByRole("button", { name: /Scan again/ })).toBeTruthy();
+  });
+
   it("opens a pull request from the Fix button and shows the link", async () => {
     mockServer({
       "/api/scan": () => ({ body: { ...scan, aiReview: true, resolved: [] } }),

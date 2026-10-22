@@ -1,10 +1,10 @@
-# Chrome Web Store listing: Launch Check
+# Chrome Web Store listing: Quick Scan First
 
-Copy each field into the Developer Dashboard. Upload `launch-check-0.3.0.zip` (built from `extension/dist`).
+Copy each field into the Developer Dashboard. Upload `quick-scan-first-0.3.0.zip` (built from `extension/dist`).
 
 ## Store listing tab
 
-**Name:** Launch Check
+**Name:** Quick Scan First
 
 **Summary (max 132 characters):**
 Scan your GitHub repo for exposed keys, open databases and payment bugs, then fix them with an AI-written pull request.
@@ -14,7 +14,7 @@ Scan your GitHub repo for exposed keys, open databases and payment bugs, then fi
 **Language:** English
 
 **Description:**
-Launch Check scans your GitHub repository for problems that would hurt you in production, then helps you fix them.
+Quick Scan First scans your GitHub repository for problems that would hurt you in production, then helps you fix them.
 
 Built for people who make apps with AI tools and aren't sure what to check before going live.
 
@@ -46,12 +46,12 @@ SAFE BY DESIGN
 PRICING
 Free: 3 scans with the built-in checks and 2 one-click fixes. Pro: 10 full AI reviews and 25 fixes a month. Credits: pay as you go, they never expire.
 
-Launch Check is a helpful second pair of eyes, not a security audit or a guarantee. AI can miss things or flag things that aren't problems, so always review a pull request before merging.
+Quick Scan First is a helpful second pair of eyes, not a security audit or a guarantee. AI can miss things or flag things that aren't problems, so always review a pull request before merging.
 
-**Graphic assets you must add yourself** (I can't generate real screenshots):
-- Screenshot(s), 1280x800 or 640x400: the report page with findings, the popup, and the "Fix it for me" pull request result. Take them from your own scans.
-- Small promo tile, 440x280 (required).
-- Optional: marquee 1400x560.
+**Graphic assets:**
+- Screenshot(s), 1280x800 or 640x400: use fresh screenshots from the renamed extension.
+- Small promo tile, 440x280: `quick-scan-first-small-promo-440x280.png`.
+- Marquee tile, 1400x560: `quick-scan-first-marquee-promo-1400x560.png`.
 - Store icon 128x128 is already inside the package (`icons/icon128.png`).
 
 ## Privacy tab
@@ -63,8 +63,8 @@ Scan the GitHub repository the user is viewing for launch-blocking bugs and secu
 - `storage`: Saves the user's GitHub token, server address, and their most recent report for each repo, in the browser only.
 - `activeTab`: Lets the toolbar popup read the address of the current tab to detect which GitHub repo the user is on.
 - Host permission `https://github.com/*` (content script): Adds the "Scan before launch" button on GitHub repository pages. It only reads the repo owner and name from the page address.
-- Host permission `https://launch-check-production.up.railway.app/*`: Sends scan and fix requests to the Launch Check service.
-- Host permissions `http://localhost/*` and `http://127.0.0.1/*`: Let developers run the Launch Check server locally.
+- Host permission `https://launch-check.deanburt1308.workers.dev/*`: Sends scan and fix requests to the Quick Scan First service.
+- Host permissions `http://localhost/*` and `http://127.0.0.1/*`: Let developers run the Quick Scan First server locally.
 - Optional host permission `https://*/*`: Requested only if the user enters their own server address in Settings.
 
 **Remote code:** No. All code is inside the package.

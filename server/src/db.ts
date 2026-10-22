@@ -1,10 +1,21 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+export interface RunResult {
+  changes: number | bigint;
+  lastInsertRowid: number | bigint;
+}
 
-export type Db = DatabaseSync;
+export interface Statement {
+  get(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): RunResult;
+}
 
-const SCHEMA = `
+/** The small synchronous SQL surface the server needs. node:sqlite (tests) and Durable Object storage (production) both fit it. */
+export interface Db {
+  prepare(sql: string): Statement;
+  exec(sql: string): void;
+}
+
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   github_id INTEGER PRIMARY KEY,
   login TEXT NOT NULL,
@@ -61,11 +72,29 @@ CREATE INDEX IF NOT EXISTS credit_user ON credit_ledger (github_id);
 CREATE INDEX IF NOT EXISTS scans_repo ON scans (github_id, owner, repo, created_at);
 `;
 
-/** Opens (and creates, if needed) the SQLite database. Use ":memory:" in tests. */
-export function openDb(path: string): Db {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-  db.exec(SCHEMA);
-  return db;
+/**
+ * Wraps a Durable Object's SQLite storage in the Db interface.
+ * Writes get a RETURNING clause so `changes` is the exact number of rows touched
+ * (an ignored INSERT OR IGNORE returns none) and `lastInsertRowid` is available.
+ */
+export function durableObjectDb(sql: SqlStorage): Db {
+  const withReturning = (query: string): string =>
+    /^\s*(insert|update|delete)\b/i.test(query) && !/\breturning\b/i.test(query)
+      ? `${query.trim().replace(/;$/, "")} RETURNING rowid AS rid`
+      : query;
+  return {
+    exec(query) {
+      sql.exec(query).toArray();
+    },
+    prepare(query) {
+      return {
+        get: (...params) => sql.exec(query, ...params).toArray()[0],
+        all: (...params) => sql.exec(query, ...params).toArray(),
+        run: (...params) => {
+          const rows = sql.exec<{ rid: number }>(withReturning(query), ...params).toArray();
+          return { changes: rows.length, lastInsertRowid: rows[0]?.rid ?? 0 };
+        },
+      };
+    },
+  };
 }

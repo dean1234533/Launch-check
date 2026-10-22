@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PackButtons, startBilling } from "../account.jsx";
-import { api } from "../lib.js";
+import { api, safeHttpsUrl } from "../lib.js";
+import { Icon } from "../ui.jsx";
 
 export function useCopy() {
   const [copied, setCopied] = useState(null);
@@ -33,10 +34,14 @@ function FixResult({ fix, account }) {
   if (fix.status === "pr_opened") {
     return (
       <div className="result">
-        <strong>✅ Fix ready: </strong>
-        <a href={fix.pullRequestUrl} target="_blank" rel="noopener noreferrer">
-          Pull request #{fix.number}
-        </a>{" "}
+        <strong>Fix ready: </strong>
+        {safeHttpsUrl(fix.pullRequestUrl) ? (
+          <a href={safeHttpsUrl(fix.pullRequestUrl)} target="_blank" rel="noopener noreferrer">
+            Pull request #{fix.number}
+          </a>
+        ) : (
+          <span>Pull request #{fix.number}</span>
+        )}{" "}
         – review it on GitHub, then merge.
         {fix.manualSteps?.length > 0 && (
           <div>
@@ -64,7 +69,7 @@ function FixResult({ fix, account }) {
       <strong>Fix failed: </strong>
       {fix.error}
       {fix.code === "upgrade_required" && (
-        <button className="primary" style={{ marginLeft: 8 }} onClick={() => startBilling("checkout")}>
+        <button className="primary inline-upgrade" onClick={() => startBilling("checkout")}>
           Upgrade to Pro
         </button>
       )}
@@ -73,10 +78,19 @@ function FixResult({ fix, account }) {
   );
 }
 
-export function Issue({ report, issue, account, onFixed }) {
+export function Issue({ report, issue, account, onFixed, index }) {
   const [busy, setBusy] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [copied, copy] = useCopy();
   const fix = report.fixes?.[issue.id];
+
+  // A fix can take a few minutes, so show a running timer while it works.
+  useEffect(() => {
+    if (!busy) return;
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [busy]);
 
   async function runFix() {
     setBusy(true);
@@ -91,27 +105,27 @@ export function Issue({ report, issue, account, onFixed }) {
   }
 
   return (
-    <article className="card issue">
+    <article className={`issue ${issue.severity}`}>
+      <div className="issue-number">{String(index).padStart(2, "0")}</div>
+      <div className="issue-body">
       <div className="issue-head">
-        <span className={`badge ${issue.severity}`}>{issue.severity === "critical" ? "Must fix" : "Should fix"}</span>
-        <span className="badge" style={{ background: "var(--surface)" }}>
-          {issue.category}
-        </span>
+        <div className="issue-labels"><span className={`badge ${issue.severity}`}>{issue.severity === "critical" ? "Must fix" : "Should fix"}</span><span className="category-label">{issue.category}</span></div>
         <h3>{issue.title}</h3>
       </div>
       <FileLink report={report} issue={issue} />
-      <p style={{ marginTop: 8 }}>{issue.explanation}</p>
+      <p className="issue-explanation">{issue.explanation}</p>
       <div className="actions">
         <button className="primary" disabled={busy} onClick={runFix}>
-          {busy ? "Writing fix… (up to a few minutes)" : fix?.status === "pr_opened" ? "🛠 Fix again" : fix ? "🛠 Try again" : "🛠 Fix it for me"}
+          <Icon name="sparkles" size={15} /> {busy ? `Writing fix… ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")} (usually 2–3 min)` : fix?.status === "pr_opened" ? "Fix again" : fix ? "Try again" : "Fix it for me"}
         </button>
-        <button onClick={() => copy(issue.fixPrompt, "one")}>{copied === "one" ? "Copied ✓" : "📋 Copy prompt"}</button>
+        <button onClick={() => copy(issue.fixPrompt, "one")}><Icon name={copied === "one" ? "check" : "copy"} size={15} /> {copied === "one" ? "Copied" : "Copy prompt"}</button>
       </div>
       <details>
-        <summary className="muted">Show the AI prompt</summary>
+        <summary>View fix prompt</summary>
         <pre>{issue.fixPrompt}</pre>
       </details>
       <FixResult fix={fix} account={account} />
+      </div>
     </article>
   );
 }

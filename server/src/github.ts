@@ -35,6 +35,40 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return results;
 }
 
+/** Workers allow a limited number of outbound requests per invocation, so files are read in batches instead of one request each. */
+const BLOB_BATCH = 40;
+
+export interface BlobRef {
+  path: string;
+  sha: string;
+}
+
+/** Reads many files with a few GraphQL calls. Binary files and blobs GitHub truncates are skipped. */
+export async function fetchBlobTexts(octokit: Octokit, owner: string, repo: string, blobs: BlobRef[]): Promise<RepoFile[]> {
+  const batches: BlobRef[][] = [];
+  for (let i = 0; i < blobs.length; i += BLOB_BATCH) batches.push(blobs.slice(i, i + BLOB_BATCH));
+  const results = await mapLimit(batches, 4, async (batch): Promise<RepoFile[]> => {
+    // The shas come from the git tree API; checking them keeps the query safe to build as a string.
+    const fields = batch
+      .map((b, i) => {
+        if (!/^[0-9a-f]{40}$/.test(b.sha)) throw new Error(`Unexpected blob id for ${b.path}`);
+        return `f${i}: object(oid: "${b.sha}") { ... on Blob { text isBinary isTruncated } }`;
+      })
+      .join("\n");
+    const data = await octokit.graphql<{ repository: Record<string, { text: string | null; isBinary: boolean; isTruncated: boolean } | null> }>(
+      `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${fields} } }`,
+      { owner, repo },
+    );
+    const out: RepoFile[] = [];
+    batch.forEach((b, i) => {
+      const blob = data.repository[`f${i}`];
+      if (blob && blob.text !== null && !blob.isBinary && !blob.isTruncated) out.push({ path: b.path, content: blob.text });
+    });
+    return out;
+  });
+  return results.flat();
+}
+
 export async function fetchSnapshot(
   octokit: Octokit,
   owner: string,
@@ -66,10 +100,7 @@ export async function fetchSnapshot(
     budget -= size;
   }
 
-  const files = await mapLimit(picked, 8, async (entry): Promise<RepoFile> => {
-    const { data } = await octokit.git.getBlob({ owner, repo, file_sha: entry.sha! });
-    return { path: entry.path!, content: Buffer.from(data.content, "base64").toString("utf8") };
-  });
+  const files = await fetchBlobTexts(octokit, owner, repo, picked.map((e) => ({ path: e.path!, sha: e.sha! })));
 
   return {
     owner,

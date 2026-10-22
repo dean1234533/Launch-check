@@ -1,5 +1,7 @@
-import express, { type NextFunction, type Request, type Response } from "express";
-import cors from "cors";
+import { Hono, type Context } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { cors } from "hono/cors";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import type Stripe from "stripe";
 import { z } from "zod";
 import { AiRefusalError, planFix, reviewRepo } from "./ai.js";
@@ -42,127 +44,117 @@ const PAGE = (title: string, body: string) => `<!doctype html><html lang="en"><h
 @media(prefers-color-scheme:dark){body{background:#111;color:#eee}}</style></head>
 <body><h1>${title}</h1><p>${body}</p></body></html>`;
 
+const MAX_BODY = 1024 * 1024;
+
+async function jsonBody(c: Context): Promise<unknown> {
+  try {
+    return await c.req.json();
+  } catch {
+    throw new HttpError(400, "The request body must be valid JSON.");
+  }
+}
+
 export function createApp({ db, config, stripe, resolveUser = resolveGithubUser }: AppDeps) {
-  const app = express();
+  const app = new Hono();
   const authenticate = makeAuthenticator(db, resolveUser);
 
+  // Per-account sliding window, kept in memory (one Durable Object serves everything, so one map is enough).
+  const recentStarts = new Map<number, number[]>();
+  function rateLimit(githubId: number, now = Date.now()): void {
+    const recent = (recentStarts.get(githubId) ?? []).filter((at) => now - at < 60 * 60 * 1000);
+    if (recent.length >= config.rateLimitPerHour) {
+      throw new HttpError(429, "You've started a lot of scans and fixes in the last hour. Please wait a little and try again.", "rate_limited");
+    }
+    recent.push(now);
+    recentStarts.set(githubId, recent);
+    if (recentStarts.size > 5000) recentStarts.delete(recentStarts.keys().next().value!);
+  }
+
   app.use(
+    "*",
     cors({
-      origin(origin, cb) {
-        if (!origin) return cb(null, true); // curl, Stripe webhooks, browser page loads
-        const allowed = config.allowedOrigins.length
-          ? config.allowedOrigins.includes(origin)
-          : origin.startsWith("chrome-extension://");
-        cb(allowed ? null : new Error("Origin not allowed"), allowed);
+      origin(origin) {
+        if (!origin) return null; // curl, Stripe webhooks, browser page loads need no CORS headers
+        const allowed = config.allowedOrigins.length ? config.allowedOrigins.includes(origin) : origin.startsWith("chrome-extension://");
+        return allowed ? origin : null;
       },
     }),
   );
+  app.use("*", bodyLimit({ maxSize: MAX_BODY, onError: (c) => c.json({ error: "Request body too large." }, 413) }));
 
-  // Stripe signs the raw request body, so this route must be registered before express.json().
-  app.post("/webhooks/stripe", express.raw({ type: "application/json", limit: "1mb" }), (req, res) => {
-    if (!stripe || !config.stripe) {
-      res.status(503).send("Billing is not configured");
-      return;
-    }
+  // Stripe signs the raw request body, so it is read as text and never parsed before verification.
+  app.post("/webhooks/stripe", async (c) => {
+    if (!stripe || !config.stripe) return c.text("Billing is not configured", 503);
     let event: Stripe.Event;
     try {
-      event = stripe.webhooks.constructEvent(req.body, req.header("stripe-signature") ?? "", config.stripe.webhookSecret);
+      event = await stripe.webhooks.constructEventAsync(await c.req.text(), c.req.header("stripe-signature") ?? "", config.stripe.webhookSecret);
     } catch {
-      res.status(400).send("Invalid signature");
-      return;
+      return c.text("Invalid signature", 400);
     }
     try {
       applyStripeEvent(db, event);
-      res.json({ received: true });
+      return c.json({ received: true });
     } catch (err) {
       console.error("Stripe webhook failed", event.type, err);
-      res.status(500).send("Webhook handler failed"); // Stripe retries with backoff
+      return c.text("Webhook handler failed", 500); // Stripe retries with backoff
     }
   });
 
-  app.use(express.json({ limit: "1mb" }));
-
-  app.get("/health", (_req, res) => {
-    res.json({ ok: true });
-  });
+  app.get("/health", (c) => c.json({ ok: true }));
 
   // Where Stripe sends people after checkout / the billing portal. The extension refreshes itself when the user returns to it.
-  app.get("/billing/success", (_req, res) => {
-    res.type("html").send(PAGE("You're on Pro 🎉", "Thanks for upgrading. Go back to the Launch Check tab; it will update in a moment. You can close this tab."));
-  });
-  app.get("/billing/cancel", (_req, res) => {
-    res.type("html").send(PAGE("No charge made", "Checkout was cancelled. You can close this tab and upgrade any time from Launch Check."));
-  });
-  app.get("/billing/return", (_req, res) => {
-    res.type("html").send(PAGE("All set", "Your billing changes are saved. You can close this tab and go back to Launch Check."));
+  app.get("/billing/success", (c) =>
+    c.html(PAGE("You're on Pro 🎉", "Thanks for upgrading. Go back to the Quick Scan First tab; it will update in a moment. You can close this tab.")),
+  );
+  app.get("/billing/credits-success", (c) =>
+    c.html(PAGE("Credits added 🎉", "Thanks for your purchase. Go back to the Quick Scan First tab; your credits will show in a moment. You can close this tab.")),
+  );
+  app.get("/billing/cancel", (c) => c.html(PAGE("No charge made", "Checkout was cancelled. You can close this tab and upgrade any time from Quick Scan First.")));
+  app.get("/billing/return", (c) => c.html(PAGE("All set", "Your billing changes are saved. You can close this tab and go back to Quick Scan First.")));
+
+  app.get("/api/me", async (c) => {
+    const { user } = await authenticate(c.req.header("authorization"));
+    return c.json({ ...accountSummary(db, config, user, Boolean(stripe)), packs: await listPacks(stripe, config) });
   });
 
-  app.get("/api/me", async (req, res, next) => {
-    try {
-      const { user } = await authenticate(req);
-      res.json({ ...accountSummary(db, config, user, Boolean(stripe)), packs: await listPacks(stripe, config) });
-    } catch (err) {
-      next(err);
-    }
+  app.post("/api/billing/checkout", async (c) => {
+    const { user } = await authenticate(c.req.header("authorization"));
+    if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
+    return c.json({ url: await createCheckoutUrl(stripe, db, config, user) });
   });
 
-  app.post("/api/billing/checkout", async (req, res, next) => {
-    try {
-      const { user } = await authenticate(req);
-      if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
-      res.json({ url: await createCheckoutUrl(stripe, db, config, user) });
-    } catch (err) {
-      next(err);
-    }
+  app.post("/api/billing/credits", async (c) => {
+    const { user } = await authenticate(c.req.header("authorization"));
+    if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
+    const { pack } = z.object({ pack: z.string().max(100) }).parse(await jsonBody(c));
+    return c.json({ url: await createCreditCheckoutUrl(stripe, db, config, user, pack) });
   });
 
-  app.post("/api/billing/credits", async (req, res, next) => {
-    try {
-      const { user } = await authenticate(req);
-      if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
-      const { pack } = z.object({ pack: z.string().max(100) }).parse(req.body);
-      res.json({ url: await createCreditCheckoutUrl(stripe, db, config, user, pack) });
-    } catch (err) {
-      next(err);
-    }
+  app.post("/api/billing/portal", async (c) => {
+    const { user } = await authenticate(c.req.header("authorization"));
+    if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
+    return c.json({ url: await createPortalUrl(stripe, config, user) });
   });
 
-  app.post("/api/billing/portal", async (req, res, next) => {
-    try {
-      const { user } = await authenticate(req);
-      if (!stripe) throw new BillingError(503, "Billing isn't set up on this server.");
-      res.json({ url: await createPortalUrl(stripe, config, user) });
-    } catch (err) {
-      next(err);
-    }
+  app.get("/api/history", async (c) => {
+    const { user } = await authenticate(c.req.header("authorization"));
+    const { owner, repo } = z.object({ owner: RepoName, repo: RepoName }).parse(c.req.query());
+    return c.json({ scans: listScans(db, user.githubId, owner, repo) });
   });
 
-  app.get("/api/history", async (req, res, next) => {
-    try {
-      const { user } = await authenticate(req);
-      const { owner, repo } = z.object({ owner: RepoName, repo: RepoName }).parse(req.query);
-      res.json({ scans: listScans(db, user.githubId, owner, repo) });
-    } catch (err) {
-      next(err);
-    }
+  app.get("/api/scans/:id", async (c) => {
+    const { user } = await authenticate(c.req.header("authorization"));
+    const scan = getScan(db, user.githubId, z.coerce.number().int().positive().parse(c.req.param("id")));
+    if (!scan) throw new HttpError(404, "Scan not found.");
+    return c.json(scan);
   });
 
-  app.get("/api/scans/:id", async (req, res, next) => {
-    try {
-      const { user } = await authenticate(req);
-      const scan = getScan(db, user.githubId, z.coerce.number().int().positive().parse(req.params.id));
-      if (!scan) throw new HttpError(404, "Scan not found.");
-      res.json(scan);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  app.post("/api/scan", async (req, res, next) => {
+  app.post("/api/scan", async (c) => {
     let refund: (() => void) | undefined;
     try {
-      const { user, token } = await authenticate(req);
-      const body = ScanBody.parse(req.body);
+      const { user, token } = await authenticate(c.req.header("authorization"));
+      rateLimit(user.githubId);
+      const body = ScanBody.parse(await jsonBody(c));
       const reservation = reserve(db, config, user, "scans");
       refund = reservation.refund;
       const octokit = githubClient(token);
@@ -211,18 +203,22 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
         resolved: previous ? resolvedSince(previous.result.issues, issues) : [],
       };
       result.scanId = saveScan(db, user.githubId, result);
-      res.json({ ...result, account: accountSummary(db, config, user, Boolean(stripe)) });
+      return c.json({ ...result, account: accountSummary(db, config, user, Boolean(stripe)) });
     } catch (err) {
       refund?.();
-      next(err);
+      throw err;
     }
   });
 
-  app.post("/api/fix", async (req, res, next) => {
+  app.post("/api/fix", async (c) => {
     let refund: (() => void) | undefined;
     try {
-      const { user, token } = await authenticate(req);
-      const { owner, repo, branch, issue } = FixBody.parse(req.body);
+      const { user, token } = await authenticate(c.req.header("authorization"));
+      rateLimit(user.githubId);
+      const { owner, repo, branch, issue: requested } = FixBody.parse(await jsonBody(c));
+      // Only problems from this account's own latest scan can be fixed, and the stored version is used, not whatever the client sent.
+      const issue = latestScan(db, user.githubId, owner, repo, branch)?.result.issues.find((i) => i.id === requested.id);
+      if (!issue) throw new HttpError(400, "That problem isn't in your latest scan of this repository. Scan again, then try the fix.", "scan_required");
       const reservation = reserve(db, config, user, "fixes");
       refund = reservation.refund;
       const octokit = githubClient(token);
@@ -234,13 +230,12 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
       const { plan, usage } = await planFix(issue, files, snapshot.allPaths);
       recordAiCall(db, user.githubId, "fixes", usage);
       const changes: FileChange[] = plan.changes
-        .filter((c) => safePath(c.path))
-        .map((c) => ({ path: c.path, content: c.action === "delete" ? null : c.content }));
+        .filter((ch) => safePath(ch.path))
+        .map((ch) => ({ path: ch.path, content: ch.action === "delete" ? null : ch.content }));
 
       if (changes.length === 0) {
         // No refund: the AI ran and cost money even though it made no change.
-        res.json({ status: "no_changes", message: plan.prBody, manualSteps: plan.manualSteps });
-        return;
+        return c.json({ status: "no_changes", message: plan.prBody, manualSteps: plan.manualSteps });
       }
 
       const manual = plan.manualSteps.length
@@ -253,54 +248,37 @@ export function createApp({ db, config, stripe, resolveUser = resolveGithubUser 
         branchName: `launch-check/${issue.id.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 40)}`,
         commitMessage: plan.prTitle,
         title: plan.prTitle,
-        body: `${plan.prBody}${manual}\n\n---\n_Opened by Launch Check. Review the changes before merging._`,
+        body: `${plan.prBody}${manual}\n\n---\n_Opened by Quick Scan First. Review the changes before merging._`,
         changes,
       });
-      res.json({ status: "pr_opened", pullRequestUrl: pr.url, number: pr.number, manualSteps: plan.manualSteps });
+      return c.json({ status: "pr_opened", pullRequestUrl: pr.url, number: pr.number, manualSteps: plan.manualSteps });
     } catch (err) {
       refund?.();
-      next(err);
+      throw err;
     }
   });
 
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    if (err instanceof z.ZodError) {
-      res.status(400).json({ error: "Invalid request", details: err.issues });
-      return;
-    }
-    if (err instanceof QuotaError) {
-      res.status(err.status).json({ error: err.message, code: err.code });
-      return;
-    }
-    if (err instanceof HttpError) {
-      res.status(err.status).json({ error: err.message, code: err.code });
-      return;
-    }
-    if (err instanceof BillingError) {
-      res.status(err.status).json({ error: err.message });
-      return;
-    }
-    if (err instanceof AiRefusalError) {
-      res.status(422).json({ error: err.message });
-      return;
-    }
+  app.notFound((c) => c.json({ error: "Not found." }, 404));
+
+  app.onError((err, c) => {
+    const reply = (body: Record<string, unknown>, status: number) => c.json(body, status as ContentfulStatusCode);
+    if (err instanceof z.ZodError) return reply({ error: "Invalid request", details: err.issues }, 400);
+    if (err instanceof QuotaError) return reply({ error: err.message, code: err.code }, err.status);
+    if (err instanceof HttpError) return reply({ error: err.message, code: err.code }, err.status);
+    if (err instanceof BillingError) return reply({ error: err.message }, err.status);
+    if (err instanceof AiRefusalError) return reply({ error: err.message }, 422);
     const status = (err as { status?: number }).status;
     const stripeError = (err as { type?: string }).type?.startsWith("Stripe");
     if (stripeError) {
       console.error(err);
-      res.status(502).json({ error: "Payment provider error. Please try again in a moment." });
-      return;
+      return reply({ error: "Payment provider error. Please try again in a moment." }, 502);
     }
-    if (status === 401) {
-      res.status(401).json({ error: "GitHub rejected the token. Check it in the extension settings." });
-      return;
-    }
+    if (status === 401) return reply({ error: "GitHub rejected the token. Check it in the extension settings." }, 401);
     if (status === 403 || status === 404) {
-      res.status(status).json({ error: "Can't access that repository with this token. Check the token's repository access and permissions." });
-      return;
+      return reply({ error: "Can't access that repository with this token. Check the token's repository access and permissions." }, status);
     }
     console.error(err);
-    res.status(500).json({ error: "Something went wrong. Please try again." });
+    return reply({ error: "Something went wrong. Please try again." }, 500);
   });
 
   return app;
