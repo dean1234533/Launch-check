@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type { Request } from "express";
 import type { Db } from "./db.js";
 import { githubClient } from "./github.js";
 import { upsertUser, type User } from "./users.js";
@@ -25,8 +24,8 @@ export const resolveGithubUser: ResolveGithubUser = async (token) => {
   return { id: data.id, login: data.login };
 };
 
-export function bearerToken(req: Request): string {
-  const token = (req.header("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+export function bearerToken(authorization: string | undefined): string {
+  const token = (authorization ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!token) throw new HttpError(401, "Missing GitHub token. Add one in the extension settings.");
   return token;
 }
@@ -39,8 +38,8 @@ const IDENTITY_TTL_MS = 5 * 60 * 1000;
  */
 export function makeAuthenticator(db: Db, resolve: ResolveGithubUser = resolveGithubUser) {
   const cache = new Map<string, { identity: GithubIdentity; expires: number }>();
-  return async (req: Request): Promise<{ user: User; token: string }> => {
-    const token = bearerToken(req);
+  return async (authorization: string | undefined): Promise<{ user: User; token: string }> => {
+    const token = bearerToken(authorization);
     const key = createHash("sha256").update(token).digest("hex");
     let hit = cache.get(key);
     if (!hit || hit.expires < Date.now()) {

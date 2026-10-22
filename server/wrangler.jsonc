@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "launch-check",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "LAUNCH_CHECK", "class_name": "LaunchCheck" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LaunchCheck"] }],
+  "observability": { "enabled": true },
+  // Non-secret settings. ALLOWED_ORIGINS lists the Chrome Web Store extension ID and the local unpacked build; add any other extension ID that should reach the API.
+  "vars": {
+    "AI_MODEL": "claude-sonnet-5-5",
+    "AI_EFFORT": "medium",
+    "ALLOWED_ORIGINS": "chrome-extension://goimgdjenphgchhcbgjafdbimjogafad,chrome-extension://ljaeennicidlbelcapmlkaaiifhnapjg",
+    "PUBLIC_URL": "https://launch-check.deanburt1308.workers.dev",
+    "STRIPE_PRICE_ID": "price_1UTHCWCnPL0pGTVTCVTKiWOr",
+    "CREDIT_PACKS": "price_1UTHEBCnPL0pGTVT5cTsmPOu:25,price_1UTHEmCnPL0pGTVTNjHDd4ai:60,price_1UTHFQCnPL0pGTVTBzQzNxKp:150",
+    // Cost controls: how much code one scan sends to Claude, and how many one-click fixes a Pro plan includes (matches the website).
+    "MAX_SCAN_CHARS": "100000",
+    "PRO_FIXES_PER_PERIOD": "10",
+    // What one AI scan and one fix cost in credits (matches the pricing shown on the website).
+    "CREDITS_PER_SCAN": "3",
+    "CREDITS_PER_FIX": "5"
+  }
+}

@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
-import type { AddressInfo } from "node:net";
-import type { Server } from "node:http";
+import { describe, it } from "node:test";
 import Stripe from "stripe";
 import { createApp } from "../src/app.js";
 import { applyStripeEvent } from "../src/billing.js";
 import { loadConfig } from "../src/config.js";
-import { openDb } from "../src/db.js";
+import { openDb } from "../src/nodeDb.js";
 import { addCredits, creditBalance } from "../src/credits.js";
 import { estimateCostUsd } from "../src/cost.js";
 import { planOf, recordAiCall, reserve, usageCounts, QuotaError } from "../src/plans.js";
@@ -17,7 +15,7 @@ const config = loadConfig({
   STRIPE_WEBHOOK_SECRET: "whsec_test",
   STRIPE_PRICE_ID: "price_x",
   FREE_SCANS: "1",
-} as NodeJS.ProcessEnv);
+});
 
 function subEvent(type: string, over: Record<string, unknown>, created = 1_700_000_000): Stripe.Event {
   return {
@@ -82,7 +80,7 @@ describe("cost tracking", () => {
     assert.ok(Math.abs(row.c - 0.6) < 1e-9);
   });
   it("defaults to a static-only free tier and a 25-fix Pro cap", () => {
-    const d = loadConfig({} as NodeJS.ProcessEnv);
+    const d = loadConfig({});
     assert.equal(d.freeAiReview, false);
     assert.equal(d.limits.pro.fixes, 25);
     assert.equal(d.maxScanChars, 250_000);
@@ -90,7 +88,7 @@ describe("cost tracking", () => {
 });
 
 describe("credits", () => {
-  const withPacks = loadConfig({ FREE_SCANS: "1", FREE_FIXES: "1", CREDIT_PACKS: "price_a:20,bad,price_b:x" } as NodeJS.ProcessEnv);
+  const withPacks = loadConfig({ FREE_SCANS: "1", FREE_FIXES: "1", CREDIT_PACKS: "price_a:20,bad,price_b:x" });
 
   it("parses credit packs from the environment and ignores malformed ones", () => {
     assert.deepEqual(withPacks.creditPacks, [{ priceId: "price_a", credits: 20 }]);
@@ -181,44 +179,132 @@ describe("stripe events", () => {
 });
 
 describe("HTTP", () => {
-  let server: Server;
-  let base: string;
   const db = openDb(":memory:");
   const stripe = new Stripe("sk_test_x");
-
-  before(async () => {
-    const app = createApp({ db, config, stripe, resolveUser: async (t) => ({ id: t === "tok-a" ? 42 : 43, login: t }) });
-    server = app.listen(0);
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  });
-  after(() => server.close());
+  const app = createApp({ db, config, stripe, resolveUser: async (t) => ({ id: t === "tok-a" ? 42 : 43, login: t }) });
+  const call = (path: string, init?: RequestInit) => app.request(path, init);
 
   it("rejects webhooks with a bad signature", async () => {
-    const res = await fetch(`${base}/webhooks/stripe`, { method: "POST", headers: { "stripe-signature": "nope", "content-type": "application/json" }, body: "{}" });
+    const res = await call("/webhooks/stripe", { method: "POST", headers: { "stripe-signature": "nope", "content-type": "application/json" }, body: "{}" });
     assert.equal(res.status, 400);
   });
 
   it("accepts a correctly signed webhook and upgrades the account", async () => {
-    await fetch(`${base}/api/me`, { headers: { authorization: "Bearer tok-a" } }); // creates the account
+    await call("/api/me", { headers: { authorization: "Bearer tok-a" } }); // creates the account
     const payload = JSON.stringify(subEvent("customer.subscription.created", {}, Math.floor(Date.now() / 1000)));
     const header = stripe.webhooks.generateTestHeaderString({ payload, secret: "whsec_test" });
-    const res = await fetch(`${base}/webhooks/stripe`, { method: "POST", headers: { "stripe-signature": header, "content-type": "application/json" }, body: payload });
+    const res = await call("/webhooks/stripe", { method: "POST", headers: { "stripe-signature": header, "content-type": "application/json" }, body: payload });
     assert.equal(res.status, 200);
-    const me = await (await fetch(`${base}/api/me`, { headers: { authorization: "Bearer tok-a" } })).json();
+    const me = (await (await call("/api/me", { headers: { authorization: "Bearer tok-a" } })).json()) as { plan: string; remaining: { scans: number } };
     assert.equal(me.plan, "pro");
     assert.equal(me.remaining.scans, 10);
   });
 
   it("requires a token", async () => {
-    assert.equal((await fetch(`${base}/api/me`)).status, 401);
+    assert.equal((await call("/api/me")).status, 401);
   });
 
   it("returns 402 with an upgrade code once the free scan is used", async () => {
     const auth = { authorization: "Bearer tok-b", "content-type": "application/json" };
     // Use the only free scan directly, then hit the endpoint.
     reserve(db, config, upsertUser(db, 43, "tok-b"), "scans");
-    const res = await fetch(`${base}/api/scan`, { method: "POST", headers: auth, body: JSON.stringify({ owner: "a", repo: "b" }) });
+    const res = await call("/api/scan", { method: "POST", headers: auth, body: JSON.stringify({ owner: "a", repo: "b" }) });
     assert.equal(res.status, 402);
-    assert.equal((await res.json()).code, "upgrade_required");
+    assert.equal(((await res.json()) as { code: string }).code, "upgrade_required");
+  });
+
+  it("rejects a malformed JSON body with 400", async () => {
+    const res = await call("/api/scan", { method: "POST", headers: { authorization: "Bearer tok-b", "content-type": "application/json" }, body: "{not json" });
+    assert.equal(res.status, 400);
+  });
+
+  it("only allows chrome-extension origins by default", async () => {
+    const ok = await call("/health", { headers: { origin: "chrome-extension://abc" } });
+    assert.equal(ok.headers.get("access-control-allow-origin"), "chrome-extension://abc");
+    const bad = await call("/health", { headers: { origin: "https://evil.example" } });
+    assert.equal(bad.headers.get("access-control-allow-origin"), null);
+  });
+});
+
+describe("quota messages", () => {
+  const msg = (kind: "scans" | "fixes", over: Record<string, string>) => {
+    const db = openDb(":memory:");
+    const cfg = loadConfig({ FREE_SCANS: "1", FREE_FIXES: "2", PRO_SCANS_PER_PERIOD: "3", ...over });
+    const user = upsertUser(db, 1, "octo");
+    for (let i = 0; i < 6; i++) {
+      try {
+        reserve(db, cfg, user, kind);
+      } catch (err) {
+        return (err as QuotaError).message;
+      }
+    }
+    return "";
+  };
+  it("pluralises scans and fixes correctly", () => {
+    assert.match(msg("scans", {}), /used your free scan\. Upgrade/);
+    assert.match(msg("scans", { FREE_SCANS: "3" }), /used your free scans\. Upgrade/);
+    assert.match(msg("fixes", {}), /used your free fixes\. Upgrade/);
+    assert.doesNotMatch(msg("scans", { FREE_SCANS: "3" }), /scanes/);
+  });
+});
+
+describe("checkout return pages", () => {
+  it("shows a credits message, not the Pro message, after buying credits", async () => {
+    const app = createApp({ db: openDb(":memory:"), config, stripe: null });
+    const credits = await (await app.request("/billing/credits-success")).text();
+    assert.match(credits, /Credits added/);
+    const pro = await (await app.request("/billing/success")).text();
+    assert.match(pro, /You're on Pro/);
+  });
+});
+
+describe("abuse limits", () => {
+  const cfg = loadConfig({ RATE_LIMIT_PER_HOUR: "2" });
+  const auth = { authorization: "Bearer tok", "content-type": "application/json" };
+  const identity = async () => ({ id: 5, login: "octo" });
+
+  it("rate limits scans per account, then lets other accounts through", async () => {
+    const app = createApp({ db: openDb(":memory:"), config: cfg, stripe: null, resolveUser: async (t) => ({ id: t === "tok" ? 5 : 6, login: t }) });
+    const call = (token = "tok") => app.request("/api/scan", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}" });
+    assert.equal((await call()).status, 400); // passes the limit, then fails validation (no network call)
+    assert.equal((await call()).status, 400);
+    const limited = await call();
+    assert.equal(limited.status, 429);
+    assert.equal(((await limited.json()) as { code: string }).code, "rate_limited");
+    assert.equal((await call("other")).status, 400); // a different account is unaffected
+  });
+
+  it("refuses to fix a problem that isn't in the account's own latest scan", async () => {
+    const app = createApp({ db: openDb(":memory:"), config: cfg, stripe: null, resolveUser: identity });
+    const issue = { id: "x", severity: "critical", category: "security", title: "t", explanation: "e", files: ["a.ts"], line: null, fixPrompt: "p" };
+    const res = await app.request("/api/fix", { method: "POST", headers: auth, body: JSON.stringify({ owner: "a", repo: "b", branch: "main", issue }) });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code: string }).code, "scan_required");
+  });
+});
+
+describe("credit packs by product id", () => {
+  const cfg = loadConfig({ CREDIT_PACKS: "price_a:25,prod_b:60,price_missing:150" });
+  const stripe = {
+    products: { retrieve: async (id: string) => ({ id, default_price: id === "prod_b" ? "price_b" : null }) },
+    prices: {
+      retrieve: async (id: string) => {
+        if (id === "price_missing") throw new Error("No such price");
+        return { id, unit_amount: id === "price_b" ? 1500 : 700, currency: "gbp" };
+      },
+    },
+  } as unknown as Stripe;
+
+  it("lists packs, resolving a product id to its default price and hiding packs Stripe can't find", async () => {
+    const { listPacks } = await import("../src/billing.js");
+    const packs = await listPacks(stripe, cfg);
+    assert.deepEqual(packs.map((p) => [p.id, p.credits, p.amount]), [["price_a", 25, 700], ["prod_b", 60, 1500]]);
+  });
+
+  it("resolves a product id to its price id, and passes price ids through", async () => {
+    const { resolvePriceId } = await import("../src/billing.js");
+    assert.equal(await resolvePriceId(stripe, "prod_b"), "price_b");
+    assert.equal(await resolvePriceId(stripe, "price_a"), "price_a");
+    assert.equal(await resolvePriceId(stripe, "prod_nodefault"), null);
   });
 });

@@ -1,11 +1,10 @@
+# Local development only: copy to .dev.vars (git-ignored). Production secrets are set with `wrangler secret put`.
 # Anthropic API key used for scans and fixes
 ANTHROPIC_API_KEY=
 # Model used for scans and fixes (claude-sonnet-5-5 is half the price of claude-opus-5-5)
 AI_MODEL=claude-sonnet-5-5
 # Thinking effort: low, medium, high, xhigh or max. medium is cheaper; high reviews more deeply.
 AI_EFFORT=medium
-# Port for the API server
-PORT=8787
 # Public base URL of this server (Stripe sends people back to it after checkout)
 PUBLIC_URL=http://localhost:8787
 # Comma-separated list of allowed Chrome extension origins, e.g. chrome-extension://abcdef...
@@ -13,8 +12,6 @@ PUBLIC_URL=http://localhost:8787
 ALLOWED_ORIGINS=
 # Max characters of source code sent to the AI per scan (~4 chars per token)
 MAX_SCAN_CHARS=250000
-# SQLite file for accounts, usage and scan history. Put it on a persistent disk in production.
-DATABASE_PATH=data/launch-check.db
 
 # --- Stripe billing (all three are needed to enable upgrades) ---
 # Dashboard > Developers > API keys (use sk_test_... while testing)

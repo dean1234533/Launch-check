@@ -4,15 +4,32 @@ import { z } from "zod";
 import { toAiUsage, type AiUsage } from "./cost.js";
 import { IssueSchema, type Issue, type RepoFile, type RepoSnapshot } from "./types.js";
 
-// Sonnet is half the price of Opus; set AI_MODEL=claude-opus-5-5 to trade cost for a deeper review.
-const MODEL = process.env.AI_MODEL || "claude-sonnet-5-5";
-// How hard the model thinks. "medium" is the cost-saving default; raise to "high" for a deeper (pricier) review.
-const EFFORT = (["low", "medium", "high", "xhigh", "max"] as const).find((e) => e === process.env.AI_EFFORT) ?? "medium";
+type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+export interface AiSettings {
+  apiKey?: string;
+  /** Sonnet is half the price of Opus; set AI_MODEL=claude-opus-5-5 to trade cost for a deeper review. */
+  model?: string;
+  /** How hard the model thinks. "medium" is the cost-saving default; raise to "high" for a deeper (pricier) review. */
+  effort?: string;
+}
+
+let settings: AiSettings = {};
+let cachedClient: Anthropic | undefined;
+
+/** Called once with the Worker's secrets and vars; the client is created on first use. */
+export function configureAi(next: AiSettings): void {
+  settings = next;
+  cachedClient = undefined;
+}
+
+const model = (): string => settings.model || "claude-sonnet-5-5";
+const effort = (): Effort => EFFORTS.find((e) => e === settings.effort) ?? "medium";
+const getClient = (): Anthropic => (cachedClient ??= new Anthropic({ apiKey: settings.apiKey }));
 // Server-side fallback: if the model declines a request, the API retries it on a
 // suitable fallback model inside the same call.
 const BETAS: Anthropic.Beta.AnthropicBeta[] = ["server-side-fallback-2026-07-01"];
-
-const client = new Anthropic();
 
 export class AiRefusalError extends Error {}
 
@@ -52,13 +69,14 @@ export async function reviewRepo(
   const fileList = snapshot.allPaths.slice(0, 3000).join("\n");
   const known = alreadyFound.map((i) => `- ${i.title} (${i.files.join(", ")})`).join("\n") || "(none)";
 
-  const response = await client.beta.messages.parse({
-    model: MODEL,
+  // Streamed: the SDK refuses a single non-streaming request this large, and a review can take a minute or two.
+  const stream = getClient().beta.messages.stream({
+    model: model(),
     max_tokens: 32000,
     betas: BETAS,
     fallbacks: "default",
     thinking: { type: "adaptive" },
-    output_config: { effort: EFFORT, format: betaZodOutputFormat(ReviewSchema) },
+    output_config: { effort: effort(), format: betaZodOutputFormat(ReviewSchema) },
     system: [{ type: "text", text: REVIEW_SYSTEM, cache_control: { type: "ephemeral" } }],
     messages: [
       {
@@ -80,10 +98,13 @@ Review the code and report the launch-blocking and important problems.`,
       },
     ],
   });
+  const response = await stream.finalMessage();
 
   if (response.stop_reason === "refusal") throw new AiRefusalError("The AI declined to review this repository.");
-  if (!response.parsed_output) throw new Error(`AI review returned no result (stop_reason: ${response.stop_reason})`);
-  return { ...response.parsed_output, usage: toAiUsage(MODEL, response.usage) };
+  if (response.stop_reason === "max_tokens") throw new Error("The review was too long to finish in one go.");
+  const text = response.content.find((b) => b.type === "text");
+  if (!text || text.type !== "text") throw new Error(`AI review returned no result (stop_reason: ${response.stop_reason})`);
+  return { ...ReviewSchema.parse(JSON.parse(text.text)), usage: toAiUsage(model(), response.usage) };
 }
 
 const FixSchema = z.object({
@@ -120,13 +141,13 @@ export async function planFix(
   files: RepoFile[],
   allPaths: string[],
 ): Promise<{ plan: FixPlan; usage: AiUsage }> {
-  const stream = client.beta.messages.stream({
-    model: MODEL,
+  const stream = getClient().beta.messages.stream({
+    model: model(),
     max_tokens: 64000,
     betas: BETAS,
     fallbacks: "default",
     thinking: { type: "adaptive" },
-    output_config: { effort: EFFORT, format: betaZodOutputFormat(FixSchema) },
+    output_config: { effort: effort(), format: betaZodOutputFormat(FixSchema) },
     system: FIX_SYSTEM,
     messages: [
       {
@@ -154,5 +175,5 @@ ${renderFiles(files) || "(these files do not exist yet)"}`,
   if (response.stop_reason === "max_tokens") throw new Error("The fix was too large to generate in one go.");
   const text = response.content.find((b) => b.type === "text");
   if (!text || text.type !== "text") throw new Error("AI fix returned no result.");
-  return { plan: FixSchema.parse(JSON.parse(text.text)), usage: toAiUsage(MODEL, response.usage) };
+  return { plan: FixSchema.parse(JSON.parse(text.text)), usage: toAiUsage(model(), response.usage) };
 }

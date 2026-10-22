@@ -1,7 +1,7 @@
 // Shared helpers for extension pages (popup, report, options).
 
-// The hosted Launch Check server. Developers can point the extension at http://localhost:8787 in Settings.
-export const DEFAULT_SERVER = "https://launch-check-production.up.railway.app";
+// The hosted Quick Scan First server. Developers can point the extension at http://localhost:8787 in Settings.
+export const DEFAULT_SERVER = "https://launch-check.deanburt1308.workers.dev";
 
 export async function getSettings() {
   const { serverUrl, githubToken } = await chrome.storage.local.get(["serverUrl", "githubToken"]);
@@ -20,7 +20,8 @@ export function parseRepoUrl(url) {
   const [owner, repo, kind, ...rest] = u.pathname.split("/").filter(Boolean);
   const reserved = ["settings", "orgs", "marketplace", "explore", "notifications", "topics", "sponsors", "login", "new"];
   if (!owner || !repo || reserved.includes(owner)) return null;
-  return { owner, repo: repo.replace(/\.git$/, ""), branch: kind === "tree" && rest.length ? rest.join("/") : undefined };
+  const onBranchPage = (kind === "tree" || kind === "blob") && rest.length;
+  return { owner, repo: repo.replace(/\.git$/, ""), branch: onBranchPage ? rest.join("/") : undefined };
 }
 
 export class ApiError extends Error {
@@ -31,7 +32,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Calls the Launch Check server. With a body it POSTs; without one it GETs. */
+/** Calls the Quick Scan First server. With a body it POSTs; without one it GETs. */
 export async function api(path, body) {
   const { serverUrl, githubToken } = await getSettings();
   if (!githubToken) throw new ApiError("Add your GitHub token in Settings first.", 0);
@@ -43,7 +44,7 @@ export async function api(path, body) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(`Can't reach the Launch Check server at ${serverUrl}. Check Settings.`, 0);
+    throw new ApiError(`Can't reach the Quick Scan First server at ${serverUrl}. Check Settings.`, 0);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.error || `Request failed (${res.status})`, res.status, data.code);
@@ -52,16 +53,32 @@ export async function api(path, body) {
 
 export const getAccount = () => api("/api/me");
 
+/** Returns the URL only if it is a plain https link, so a bad server response can never open a javascript: or data: URL. */
+export function safeHttpsUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+async function openInNewTab(url) {
+  const safe = safeHttpsUrl(url);
+  if (!safe) throw new ApiError("The server sent an invalid link.", 0);
+  await chrome.tabs.create({ url: safe });
+}
+
 /** Opens Stripe Checkout (upgrade) or the Stripe billing portal (manage/cancel) in a new tab. */
 export async function openBilling(kind) {
   const { url } = await api(kind === "portal" ? "/api/billing/portal" : "/api/billing/checkout", {});
-  await chrome.tabs.create({ url });
+  await openInNewTab(url);
 }
 
 /** Opens Stripe Checkout for a one-time credit pack. */
 export async function buyCredits(pack) {
   const { url } = await api("/api/billing/credits", { pack });
-  await chrome.tabs.create({ url });
+  await openInNewTab(url);
 }
 
 export function packLabel(p) {

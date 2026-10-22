@@ -1,32 +1,27 @@
 {
   "name": "launch-check-server",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "engines": {
-    "node": ">=22.13"
-  },
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
-    "start": "node --env-file-if-exists=.env dist/server.js",
-    "build": "tsc -p tsconfig.json",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types --include-runtime=false --env-file /dev/null",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/*.test.ts",
-    "costs": "tsx --env-file-if-exists=.env src/costReport.ts"
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
     "@octokit/rest": "^22.0.1",
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
+    "hono": "^4.13.13",
     "stripe": "^22.6.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
+    "@cloudflare/workers-types": "^5.20261022.1",
     "@types/node": "^26.6.3",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.3"
   }
 }

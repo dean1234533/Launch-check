@@ -41,7 +41,7 @@ report: 🔴 must fix / 🟡 should fix ◀────────────�
 | Folder | What it is |
 |---|---|
 | `extension/` | Chrome extension (Manifest V3). The popup, settings and report pages are React, built with Vite. `extension/public/` holds the manifest, icons and the GitHub button script |
-| `server/` | Node + TypeScript API: GitHub access, built-in checks, Claude review and fixes |
+| `server/` | Cloudflare Worker (TypeScript, Hono) API: GitHub access, built-in checks, Claude review and fixes |
 | `web/` | The landing page and privacy policy (React + Vite). Deploy on Cloudflare Pages |
 | `scripts/make-icons.mjs` | Regenerates the extension icons (into `extension/public/icons`) |
 
@@ -52,8 +52,8 @@ report: 🔴 must fix / 🟡 should fix ◀────────────�
 ```bash
 cd server
 npm install
-cp .env.example .env      # add your ANTHROPIC_API_KEY
-npm run dev               # http://localhost:8787
+cp .dev.vars.example .dev.vars   # add your ANTHROPIC_API_KEY
+npm run dev                      # wrangler dev: http://localhost:8787
 npm test                  # built-in check tests
 ```
 
@@ -145,13 +145,35 @@ On Cloudflare Pages, connect this repo and set **Root directory** `web`, **Build
 
 ## Deploying the server
 
-`server/Dockerfile` builds the API. Run it anywhere that gives you HTTPS and a **persistent disk** (Fly.io, Railway, Render, a VPS), and mount the disk at `/data` because the SQLite database lives there (`DATABASE_PATH`). Run a single instance, since usage limits are counted in that one database. Set `ANTHROPIC_API_KEY`, the Stripe variables, `PUBLIC_URL` and `ALLOWED_ORIGINS=chrome-extension://<your extension id>`. Then enter the server URL in the extension settings (or change `DEFAULT_SERVER` in `extension/lib.js` before publishing).
+The API is a Cloudflare Worker (`server/src/worker.ts`). One Durable Object holds the database (accounts, credits, scan history) in its built-in SQLite storage, so there is no disk or separate database to run. Live at https://launch-check.deanburt1308.workers.dev.
+
+```bash
+cd server
+npm install
+npx wrangler login          # once
+npm run deploy
+```
+
+Secrets are never put in `wrangler.jsonc`. Set them once with Wrangler (it asks for the value, so nothing lands in your shell history):
+
+```bash
+npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put STRIPE_SECRET_KEY
+npx wrangler secret put STRIPE_WEBHOOK_SECRET
+```
+
+Plain settings (`STRIPE_PRICE_ID`, `CREDIT_PACKS`, `PUBLIC_URL`, `ALLOWED_ORIGINS=chrome-extension://<your extension id>`, `AI_MODEL`, `AI_EFFORT`) are the `vars` in `server/wrangler.jsonc`. Point the Stripe webhook at `<PUBLIC_URL>/webhooks/stripe`. Then enter the server URL in the extension settings (or change `DEFAULT_SERVER` in `extension/src/lib.js` before publishing).
+
+Notes:
+- Everything goes through one Durable Object, so usage limits are counted in one place. Fine for launch; shard by GitHub user if traffic ever needs it.
+- Workers cap outbound requests per call (50 on the free plan), so file contents are read from GitHub in GraphQL batches.
+- `npm run types` regenerates `worker-configuration.d.ts` after you change `wrangler.jsonc`.
 
 ## Costs
 
-The server records the real token usage and estimated dollar cost of every AI call. Run `npm run costs` in `server/` to see the average and maximum cost per scan and fix, and the most expensive users.
+The server records the real token usage and estimated dollar cost of every AI call. The data is in the `ai_calls` table of the Durable Object's database. The old `npm run costs` script read a local SQLite file, so it was removed with the move to Cloudflare; add an admin endpoint if you want a cost report.
 
-Each scan sends up to `MAX_SCAN_CHARS` (default 250k characters, about 60k tokens) of the most relevant files to Claude. At current prices that is roughly **$0.12–$0.30 per full scan** with the default Sonnet 5.5 model at medium effort (`AI_MODEL`, `AI_EFFORT`) (about double that on Opus 5.5) and a few cents to about $0.15 per fix (estimates; `npm run costs` shows the real numbers), depending on repo size. The plan limits above keep usage within what a subscription pays for.
+Each scan sends up to `MAX_SCAN_CHARS` (default 250k characters, about 60k tokens) of the most relevant files to Claude. At current prices that is roughly **$0.12–$0.30 per full scan** with the default Sonnet 5.5 model at medium effort (`AI_MODEL`, `AI_EFFORT`) (about double that on Opus 5.5) and a few cents to about $0.15 per fix (estimates; the `ai_calls` table has the real numbers), depending on repo size. The plan limits above keep usage within what a subscription pays for.
 
 ## Done and still to do
 
@@ -160,7 +182,7 @@ Each scan sends up to `MAX_SCAN_CHARS` (default 250k characters, about 60k token
 - [x] Usage limits stored in a database, per plan and billing period
 - [x] Scan history, and "no longer reported" after a re-scan
 - [x] Dependency check against OSV.dev (npm `package-lock.json`)
-- [x] Dockerfile for deployment
+- [x] Cloudflare Worker + Durable Object deployment (replaced Docker/Railway)
 - [ ] **GitHub App** instead of personal tokens (one-click install, pick repos). This needs an app registered under your GitHub account, so it is left for you
 - [ ] Build check: install and build the project in a sandbox
 - [ ] Dependency check for yarn, pnpm and Python lockfiles

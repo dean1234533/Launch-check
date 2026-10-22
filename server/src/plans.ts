@@ -61,6 +61,7 @@ export function reserve(db: Db, config: Config, user: User, kind: UsageKind, now
   const plan = planOf(user);
   const limit = config.limits[plan][kind];
   const noun = kind === "scans" ? "scan" : "fix";
+  const plural = (n: number) => (n === 1 ? noun : kind === "scans" ? "scans" : "fixes");
   const cost = kind === "scans" ? config.creditCosts.scan : config.creditCosts.fix;
   const planLeft = usageCounts(db, user, now)[kind] < limit;
 
@@ -92,9 +93,9 @@ export function reserve(db: Db, config: Config, user: User, kind: UsageKind, now
 
   const hint = config.creditPacks.length ? " You can also buy credits." : "";
   if (plan === "free") {
-    throw new QuotaError(402, "upgrade_required", `You've used your free ${noun}${limit === 1 ? "" : "es"}. Upgrade to Pro to keep going.${hint}`);
+    throw new QuotaError(402, "upgrade_required", `You've used your free ${plural(limit)}. Upgrade to Pro to keep going.${hint}`);
   }
-  throw new QuotaError(429, "limit_reached", `You've used all ${limit} ${noun}${limit === 1 ? "" : "es"} for this billing period, and it resets when your plan renews.${hint}`);
+  throw new QuotaError(429, "limit_reached", `You've used all ${limit} ${plural(limit)} for this billing period, and it resets when your plan renews.${hint}`);
 }
 
 export function accountSummary(db: Db, config: Config, user: User, billingEnabled: boolean, now = Date.now()) {
@@ -123,5 +124,7 @@ export function recordAiCall(db: Db, githubId: number, kind: UsageKind, usage: A
     `INSERT INTO ai_calls (github_id, kind, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(githubId, kind, usage.model, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheWriteTokens, cost, Date.now());
+  // One line per call in the Worker logs, so real cost per scan and fix can be read without querying the database.
+  console.log(JSON.stringify({ event: "ai_call", kind, model: usage.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, cacheReadTokens: usage.cacheReadTokens, costUsd: Number(cost.toFixed(4)) }));
   return cost;
 }
